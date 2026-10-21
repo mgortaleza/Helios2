@@ -1,0 +1,24 @@
+# Maven / Java
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.log
+*.class
+*.war
+*.jar
+*.ear
+
+# Node / Vite Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# Built static bundle (generated from frontend/dist)
+src/main/resources/static/
+
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
