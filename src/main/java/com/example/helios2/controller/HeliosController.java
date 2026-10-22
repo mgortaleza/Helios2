@@ -15,8 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.helios2.config.SqlServerDataSourceFactory;
 import com.example.helios2.service.HeliosService;
+import com.example.helios2.service.HeliosService.ClaimDto;
 import com.example.helios2.service.HeliosService.PartyDto;
+import com.example.helios2.service.HeliosService.PolicyDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
+import com.example.helios2.service.HeliosService.TaskDto;
 import com.example.helios2.service.TenantRegistryService;
 import com.example.helios2.tenant.TenantConfig;
 import com.example.helios2.tenant.TenantContext;
@@ -51,17 +54,59 @@ public class HeliosController {
         return ResponseEntity.ok(saved);
     }
 
+    @GetMapping("/tasks")
+    public List<TaskDto> getTasks() {
+        return heliosService.getAllTasks();
+    }
+
+    public record CreateTaskRequest(String title, String type, String subType, String relatedRecord, String status, String dueDate) {
+    }
+
+    @PostMapping("/tasks")
+    public ResponseEntity<TaskDto> createTask(@RequestBody CreateTaskRequest req) {
+        TaskDto created = heliosService.createTask(
+                req.title(),
+                req.type(),
+                req.subType(),
+                req.relatedRecord(),
+                req.status(),
+                req.dueDate()
+        );
+        return ResponseEntity.ok(created);
+    }
+
+    @GetMapping("/policies")
+    public List<PolicyDto> searchPolicies(
+            @RequestParam(name = "name", required = false) String name,
+            @RequestParam(name = "address", required = false) String address,
+            @RequestParam(name = "productType", required = false) String productType,
+            @RequestParam(name = "fileStatus", required = false) String fileStatus) {
+        return heliosService.searchPolicies(name, address, productType, fileStatus);
+    }
+
     @GetMapping("/submissions")
     public List<SubmissionDto> getSubmissions() {
         return heliosService.getAllSubmissions();
     }
 
-    public record CreateSubmissionRequest(int partyId) {
+    public record CreateSubmissionRequest(
+            int partyId,
+            String underwriter,
+            String limit,
+            String retention,
+            String premium
+    ) {
     }
 
     @PostMapping("/submissions")
     public ResponseEntity<SubmissionDto> createSubmission(@RequestBody CreateSubmissionRequest request) {
-        SubmissionDto created = heliosService.createSubmission(request.partyId());
+        SubmissionDto created = heliosService.createSubmissionWithDetails(
+                request.partyId(),
+                request.underwriter(),
+                request.limit(),
+                request.retention(),
+                request.premium()
+        );
         return ResponseEntity.ok(created);
     }
 
@@ -76,6 +121,34 @@ public class HeliosController {
     @PostMapping("/parties")
     public ResponseEntity<PartyDto> createParty(@RequestBody CreatePartyRequest request) {
         PartyDto created = heliosService.createParty(request.orgName());
+        return ResponseEntity.ok(created);
+    }
+
+    @GetMapping("/claims")
+    public List<ClaimDto> getClaims() {
+        return heliosService.getAllClaims();
+    }
+
+    public record CreateClaimRequest(
+            String policyNbr,
+            String insuredName,
+            String productType,
+            String lossDate,
+            String reserveAmt,
+            String description
+    ) {
+    }
+
+    @PostMapping("/claims")
+    public ResponseEntity<ClaimDto> createClaim(@RequestBody CreateClaimRequest request) {
+        ClaimDto created = heliosService.createClaim(
+                request.policyNbr(),
+                request.insuredName(),
+                request.productType(),
+                request.lossDate(),
+                request.reserveAmt(),
+                request.description()
+        );
         return ResponseEntity.ok(created);
     }
 
@@ -96,4 +169,3 @@ public class HeliosController {
         return result;
     }
 }
-
