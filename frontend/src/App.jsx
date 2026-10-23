@@ -1659,7 +1659,15 @@ const RatingQuoteDialog = ({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
 
+  const parseNum = (val, fallback = 0) => {
+    if (typeof val === 'number') return isNaN(val) ? fallback : val;
+    const clean = String(val || '').replace(/[^0-9.-]/g, '');
+    const num = parseFloat(clean);
+    return isNaN(num) ? fallback : num;
+  };
+
   useEffect(() => {
+    if (!open) return;
     if (submission) {
       setSelectedSubId(submission.submsnId);
       let pCode = 'TECH_EO';
@@ -1672,57 +1680,77 @@ const RatingQuoteDialog = ({
         underwriter: submission.fileLevelInfo?.underwriter || 'Michael Chang',
         effectiveDate: submission.fileLevelInfo?.effectiveDate || new Date().toISOString().slice(0, 10)
       }));
-    } else if (submissions.length > 0) {
+    } else if (submissions && submissions.length > 0) {
       setSelectedSubId(submissions[0].submsnId);
     }
     setRateResult(null);
     setError(null);
-  }, [submission, submissions, open]);
+  }, [open, submission?.submsnId]);
 
-  const activeSub = submission || submissions.find((s) => s.submsnId === Number(selectedSubId));
+  const activeSub = submission || (submissions || []).find((s) => s.submsnId === Number(selectedSubId));
 
   const handleCalculateRate = async () => {
     setIsRating(true);
     setError(null);
-    try {
-      const payload = {
-        tenantId: Number(activeTenantId),
-        productCode: ratingForm.productCode,
-        stateCode: ratingForm.stateCode,
-        effectiveDate: ratingForm.effectiveDate,
-        businessType: 'NEW',
-        exposureValue: Number(ratingForm.exposureValue),
-        classCode: ratingForm.classCode,
-        territoryCode: ratingForm.territoryCode,
-        occurrenceLimit: Number(ratingForm.occurrenceLimit),
-        aggregateLimit: Number(ratingForm.aggregateLimit),
-        retentionAmount: Number(ratingForm.retentionAmount),
-        scheduleMod: Number(ratingForm.scheduleMod),
-        riskAnswers: { priorLossesCount: 0 }
-      };
+    const exposure = parseNum(ratingForm.exposureValue, 10000000);
+    const occLimit = parseNum(ratingForm.occurrenceLimit, 5000000);
+    const aggLimit = parseNum(ratingForm.aggregateLimit, 5000000);
+    const retention = parseNum(ratingForm.retentionAmount, 50000);
+    const schedMod = parseNum(ratingForm.scheduleMod, 0.90);
 
-      const res = await fetch('/rating-api/rate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setRateResult(data);
-    } catch {
+    const payload = {
+      tenantId: Number(activeTenantId) || 1,
+      productCode: ratingForm.productCode,
+      stateCode: ratingForm.stateCode,
+      effectiveDate: ratingForm.effectiveDate,
+      businessType: 'NEW',
+      exposureValue: exposure,
+      classCode: ratingForm.classCode,
+      territoryCode: ratingForm.territoryCode,
+      occurrenceLimit: occLimit,
+      aggregateLimit: aggLimit,
+      retentionAmount: retention,
+      scheduleMod: schedMod,
+      riskAnswers: { priorLossesCount: 0 }
+    };
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      try {
+        const res = await fetch('/rating-api/rate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.finalAnnualPremium !== undefined) {
+            setRateResult(data);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Live rating API unavailable or timed out, using SERFF formula fallback:', err);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
       // Local fallback calculation aligned with SERFF state plans if service offline
-      const exp = Number(ratingForm.exposureValue) / 1000;
+      const exp = exposure / 1000;
       const baseLoss = ratingForm.productCode === 'MED_MAL' ? 2.45 : (ratingForm.productCode === 'DNO' ? 1.40 : 1.85);
       const base = exp * baseLoss;
       const terr = ratingForm.stateCode === 'CA' ? 1.25 : (ratingForm.stateCode === 'NY' ? 1.35 : (ratingForm.stateCode === 'TX' ? 1.10 : 1.15));
-      const lim = Number(ratingForm.occurrenceLimit) >= 10000000 ? 2.20 : (Number(ratingForm.occurrenceLimit) >= 5000000 ? 1.80 : 1.35);
-      const ded = Number(ratingForm.retentionAmount) >= 50000 ? 0.90 : 1.00;
+      const lim = occLimit >= 10000000 ? 2.20 : (occLimit >= 5000000 ? 1.80 : 1.35);
+      const ded = retention >= 50000 ? 0.90 : 1.00;
       const sub = base * terr * lim * ded;
-      const finalPrem = Math.round(sub * Number(ratingForm.scheduleMod) * 100) / 100;
+      const finalPrem = Math.round(sub * schedMod * 100) / 100;
       const serffNum = `${ratingForm.stateCode}-2025-0812-${ratingForm.productCode === 'MED_MAL' ? 'MM' : (ratingForm.productCode === 'DNO' ? 'DO' : 'EO')}`;
 
       setRateResult({
-        ratingStatus: Number(ratingForm.occurrenceLimit) > 5000000 ? 'REFERRAL' : 'RATED',
+        ratingStatus: occLimit > 5000000 ? 'REFERRAL' : 'RATED',
         productCode: ratingForm.productCode,
         planCode: `${ratingForm.productCode}_COMMERCIAL`,
         resolvedFilingVersion: '2025.1',
@@ -1735,10 +1763,10 @@ const RatingQuoteDialog = ({
         limitRelativityFactor: lim,
         deductibleFactor: ded,
         subtotalPremium: Math.round(sub * 100) / 100,
-        scheduleModifier: Number(ratingForm.scheduleMod),
+        scheduleModifier: schedMod,
         finalAnnualPremium: finalPrem,
         minimumPremium: ratingForm.productCode === 'MED_MAL' ? 5000 : 2500,
-        underwritingReferrals: Number(ratingForm.occurrenceLimit) > 5000000
+        underwritingReferrals: occLimit > 5000000
           ? ['SENIOR_UW_REFERRAL: Occurrence limit exceeds standard $5M branch authority.']
           : [],
         attachedForms: [
@@ -1751,9 +1779,11 @@ const RatingQuoteDialog = ({
           `2. [Exposure Units] Normalized: ${exp.toLocaleString()} exposure units`,
           `3. [Base Rate] Base Loss Cost: ${baseLoss.toFixed(2)}`,
           `4. [Relativities] Terr: ${terr.toFixed(2)} * Limit: ${lim.toFixed(2)} * Ded: ${ded.toFixed(2)}`,
-          `5. [Schedule Mod] Capped Mod: ${ratingForm.scheduleMod} -> Final Annual Premium: ${finalPrem.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+          `5. [Schedule Mod] Capped Mod: ${schedMod} -> Final Annual Premium: $${finalPrem.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
         ]
       });
+    } catch (err) {
+      setError(`Rating calculation failed: ${err.message}`);
     } finally {
       setIsRating(false);
     }
@@ -1765,8 +1795,8 @@ const RatingQuoteDialog = ({
     setError(null);
     try {
       const prem = `$${Number(rateResult.finalAnnualPremium).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-      const lim = `$${Number(ratingForm.occurrenceLimit).toLocaleString()}`;
-      const ret = `$${Number(ratingForm.retentionAmount).toLocaleString()}`;
+      const lim = `$${parseNum(ratingForm.occurrenceLimit, 5000000).toLocaleString()}`;
+      const ret = `$${parseNum(ratingForm.retentionAmount, 50000).toLocaleString()}`;
 
       const saved = await apiFetch('/api/quotes', {
         method: 'POST',
@@ -1774,10 +1804,10 @@ const RatingQuoteDialog = ({
           submsnId: Number(selectedSubId) || (submission ? Number(submission.submsnId) : 0),
           productCode: ratingForm.productCode,
           stateCode: ratingForm.stateCode,
-          exposureVal: ratingForm.exposureValue,
+          exposureVal: String(ratingForm.exposureValue),
           limitAmt: lim,
           retentionAmt: ret,
-          scheduleMod: ratingForm.scheduleMod,
+          scheduleMod: String(ratingForm.scheduleMod),
           premium: prem,
           serffTrackingNbr: rateResult.serffTrackingNumber || `${ratingForm.stateCode}-2025-BASE`,
           baseRate: String(rateResult.baseRate || 1.85),
