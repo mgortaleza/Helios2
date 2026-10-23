@@ -54,6 +54,19 @@ public class HeliosController {
         return ResponseEntity.ok(saved);
     }
 
+    @GetMapping("/roles")
+    public List<TenantRegistryService.TenantRoleDto> getRoles(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int targetTenantId = (tenantIdParam != null) ? tenantIdParam : TenantContext.getTenantId();
+        return tenantRegistryService.getRolesForTenant(targetTenantId);
+    }
+
+    @PostMapping("/roles")
+    public ResponseEntity<TenantRegistryService.TenantRoleDto> saveRole(
+            @RequestBody TenantRegistryService.TenantRoleDto role) {
+        return ResponseEntity.ok(tenantRegistryService.saveRoleForTenant(role));
+    }
+
     @GetMapping("/tasks")
     public List<TaskDto> getTasks() {
         return heliosService.getAllTasks();

@@ -60,60 +60,60 @@ import {
   Plus
 } from 'lucide-react';
 
-// --- Theme Configuration ---
-const heliosTheme = createTheme({
-  palette: {
-    primary: {
-      main: '#013a12',
-      light: '#2c5e3b',
-      dark: '#00260b'
+// --- Dynamic Per-Tenant Theme Builder ---
+function buildTenantTheme(primaryColor = '#013a12', accentColor = '#f59e0b') {
+  return createTheme({
+    palette: {
+      primary: {
+        main: primaryColor || '#013a12'
+      },
+      secondary: {
+        main: accentColor || '#f59e0b'
+      },
+      background: {
+        default: '#f8fafc',
+        paper: '#ffffff'
+      }
     },
-    secondary: {
-      main: '#005b7f'
+    typography: {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif',
+      h4: { fontWeight: 700, color: '#0f172a' },
+      h5: { fontWeight: 700, color: '#0f172a' },
+      h6: { fontWeight: 600, color: '#0f172a' }
     },
-    background: {
-      default: '#f8fafc',
-      paper: '#ffffff'
-    }
-  },
-  typography: {
-    fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif',
-    h4: { fontWeight: 700, color: '#0f172a' },
-    h5: { fontWeight: 700, color: '#0f172a' },
-    h6: { fontWeight: 600, color: '#0f172a' }
-  },
-  components: {
-    MuiButton: {
-      styleOverrides: { root: { textTransform: 'none', borderRadius: 6, fontWeight: 500 } }
-    },
-    MuiCard: {
-      styleOverrides: {
-        root: {
-          borderRadius: 10,
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)'
+    components: {
+      MuiButton: {
+        styleOverrides: { root: { textTransform: 'none', borderRadius: 6, fontWeight: 500 } }
+      },
+      MuiCard: {
+        styleOverrides: {
+          root: {
+            borderRadius: 10,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)'
+          }
         }
       }
     }
-  }
-});
+  });
+}
 
-// Gold/Amber geometric emblem from the screenshot
-const HeliosBrandIcon = () => (
+// Geometric emblem that adapts to the active tenant's primary & accent colors
+const HeliosBrandIcon = ({ primaryColor = '#013a12', accentColor = '#f59e0b' }) => (
   <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="3" y="3" width="11" height="11" rx="2.5" fill="#f59e0b" />
-    <rect x="18" y="3" width="11" height="11" rx="2.5" fill="#fbbf24" opacity="0.85" />
-    <rect x="3" y="18" width="11" height="11" rx="2.5" fill="#fbbf24" opacity="0.85" />
-    <rect x="18" y="18" width="11" height="11" rx="2.5" fill="#f59e0b" />
-    <rect x="10.5" y="10.5" width="11" height="11" rx="2" fill="#013a12" />
-    <rect x="13" y="13" width="6" height="6" rx="1" fill="#fde68a" />
+    <rect x="3" y="3" width="11" height="11" rx="2.5" fill={accentColor} />
+    <rect x="18" y="3" width="11" height="11" rx="2.5" fill={accentColor} opacity="0.82" />
+    <rect x="3" y="18" width="11" height="11" rx="2.5" fill={accentColor} opacity="0.82" />
+    <rect x="18" y="18" width="11" height="11" rx="2.5" fill={accentColor} />
+    <rect x="10.5" y="10.5" width="11" height="11" rx="2" fill={primaryColor} />
+    <rect x="13" y="13" width="6" height="6" rx="1" fill="#ffffff" opacity="0.85" />
   </svg>
 );
 
 function getTenantInitials(tenant) {
   if (!tenant) return 'AC';
-  if (tenant.tenantId === 1) return 'AC';
-  if (tenant.tenantId === 2) return 'GR';
+  if (tenant.tenantId === 1 && tenant.tenantName?.includes('Default')) return 'AC';
+  if (tenant.tenantId === 2 && tenant.tenantName?.includes('Legacy')) return 'GR';
   const words = (tenant.tenantName || 'AC').split(/\s+/);
   return words.slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || 'AC';
 }
@@ -122,6 +122,9 @@ function getTenantShortLabel(tenant) {
   if (!tenant) return 'Acme Corp';
   if (tenant.tenantId === 1 && tenant.tenantName?.includes('Default')) {
     return 'Acme Corp';
+  }
+  if (tenant.tenantId === 2 && tenant.tenantName?.includes('Legacy')) {
+    return 'Global Risk Partners';
   }
   return tenant.tenantName;
 }
@@ -163,12 +166,18 @@ function StatusPill({ status }) {
   );
 }
 
-// --- 1. Dashboard View (Matches Screenshot Exactly) ---
-const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
+// --- 1. Dashboard View (Matches Screenshot + Adapts Per Tenant & Role) ---
+const DashboardView = ({ apiFetch, activeTenantId, currentTenant, activeRole, onNavigate }) => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState(activeRole?.defaultTaskFilter || '');
   const [subTypeFilter, setSubTypeFilter] = useState('');
+  const primaryColor = currentTenant?.primaryColor || '#013a12';
+
+  useEffect(() => {
+    setTypeFilter(activeRole?.defaultTaskFilter || '');
+    setSubTypeFilter('');
+  }, [activeRole?.roleCode, activeRole?.defaultTaskFilter]);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -199,34 +208,35 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
     return Array.from(new Set(tasks.filter((t) => t.type === typeFilter).map((t) => t.subType)));
   }, [tasks, typeFilter]);
 
+  const isTenantTwo = Number(activeTenantId) === 2;
   const kpiCards = [
     {
       label: 'Total Active Policies',
-      value: '1245',
-      icon: <FileText size={20} color="#059669" />,
-      iconBg: '#ecfdf5',
+      value: isTenantTwo ? '842' : '1245',
+      icon: <FileText size={20} color={primaryColor} />,
+      iconBg: isTenantTwo ? '#eff6ff' : '#ecfdf5',
       targetView: 'policy'
     },
     {
       label: 'Pending Submissions',
-      value: '87',
+      value: isTenantTwo ? '54' : '87',
       icon: <Files size={20} color="#d97706" />,
       iconBg: '#fffbeb',
       targetView: 'submissions'
     },
     {
       label: 'Open Claims',
-      value: '32',
+      value: isTenantTwo ? '19' : '32',
       icon: <AlertCircle size={20} color="#ef4444" />,
       iconBg: '#fef2f2',
       targetView: 'claims'
     },
     {
       label: 'YTD Written Premium',
-      value: '$14.2M',
-      trend: '+5.4%',
-      icon: <TrendingUp size={20} color="#059669" />,
-      iconBg: '#ecfdf5',
+      value: isTenantTwo ? '$9.8M' : '$14.2M',
+      trend: isTenantTwo ? '+8.1%' : '+5.4%',
+      icon: <TrendingUp size={20} color={primaryColor} />,
+      iconBg: isTenantTwo ? '#eff6ff' : '#ecfdf5',
       targetView: 'policy'
     }
   ];
@@ -241,7 +251,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
   return (
     <Box>
       {/* Page Title & Subtitle */}
-      <Box mb={3}>
+      <Box sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
           Dashboard
         </Typography>
@@ -285,7 +295,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
                   <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 500, display: 'block', mb: 0.2 }}>
                     {kpi.label}
                   </Typography>
-                  <Box display="flex" alignItems="baseline" gap={1}>
+                  <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
                     <Typography sx={{ fontSize: '1.55rem', fontWeight: 700, color: '#0f172a', lineHeight: 1.2 }}>
                       {kpi.value}
                     </Typography>
@@ -321,7 +331,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
             My Tasks
           </Typography>
 
-          <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             {/* Segmented Pill Tabs */}
             <Box
               sx={{
@@ -352,7 +362,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
                       fontSize: '0.8rem',
                       fontWeight: active ? 600 : 500,
                       backgroundColor: active ? '#ffffff' : 'transparent',
-                      color: active ? '#013a12' : '#64748b',
+                      color: active ? primaryColor : '#64748b',
                       boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
                       transition: 'all 0.15s ease'
                     }}
@@ -364,7 +374,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
             </Box>
 
             {/* Subtype Filter */}
-            <Box display="flex" alignItems="center" gap={1}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.82rem' }}>
                 Subtype:
               </Typography>
@@ -471,7 +481,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
                         sx={{
                           fontWeight: 700,
                           fontSize: '0.82rem',
-                          color: '#013a12',
+                          color: primaryColor,
                           cursor: 'pointer',
                           '&:hover': { textDecoration: 'underline' }
                         }}
@@ -480,7 +490,7 @@ const DashboardView = ({ apiFetch, activeTenantId, onNavigate }) => {
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ color: '#64748b', fontSize: '0.82rem' }}>
-                      <Box display="flex" alignItems="center" gap={0.75}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                         <Clock size={14} color="#94a3b8" />
                         <span>{task.dueDate}</span>
                       </Box>
@@ -572,7 +582,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
 
     return (
       <Box>
-        <Box mb={2}>
+        <Box sx={{ mb: 2 }}>
           <Button
             variant="text"
             onClick={() => {
@@ -593,7 +603,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
                 <Typography variant="caption" color="textSecondary" textTransform="uppercase" fontWeight="bold">
                   Insured Address
                 </Typography>
-                <Typography variant="body1" mt={1} fontWeight={600}>
+                <Typography variant="body1" sx={{ mt: 1, fontWeight: 600 }}>
                   {selectedPolicy.name}
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
@@ -604,7 +614,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
                 <Typography variant="caption" color="textSecondary" textTransform="uppercase" fontWeight="bold">
                   Industry Sector
                 </Typography>
-                <Typography variant="body1" mt={1} display="flex" alignItems="center">
+                <Typography variant="body1" sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
                   <Briefcase size={16} style={{ marginRight: 8, color: '#013a12' }} />
                   {selectedPolicy.industry}
                 </Typography>
@@ -613,7 +623,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
                 <Typography variant="caption" color="textSecondary" textTransform="uppercase" fontWeight="bold">
                   Agency Information
                 </Typography>
-                <Typography variant="body1" mt={1}>
+                <Typography variant="body1" sx={{ mt: 1 }}>
                   {selectedPolicy.agencyInfo}
                 </Typography>
               </Grid>
@@ -674,10 +684,10 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
         )}
 
         {activeTab === 1 && activeFile && (
-          <Box display="flex" flexDirection="column" gap={3}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             <Card elevation={0}>
               <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h6">File Level Information: {activeFile.id}</Typography>
                   <StatusPill status={activeFile.status} />
                 </Box>
@@ -774,7 +784,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
 
   return (
     <Box>
-      <Box mb={3}>
+      <Box sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
           Policies
         </Typography>
@@ -896,7 +906,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
 };
 
 // --- 3. Submissions View ---
-const SubmissionsView = ({ apiFetch, activeTenantId }) => {
+const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [subTab, setSubTab] = useState(0);
   const [submissions, setSubmissions] = useState([]);
   const [parties, setParties] = useState([]);
@@ -906,6 +916,8 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
   const [openAddOrg, setOpenAddOrg] = useState(false);
   const [flash, setFlash] = useState(null);
   const [selectedSub, setSelectedSub] = useState(null);
+  const canCreateSubmission = activeRole ? activeRole.canCreateSubmission !== false : true;
+  const canAddOrganization = activeRole ? activeRole.canAddOrganization !== false : true;
 
   const loadSubmissions = useCallback(async () => {
     try {
@@ -978,7 +990,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
   if (selectedSub) {
     return (
       <Box>
-        <Box mb={2}>
+        <Box sx={{ mb: 2 }}>
           <Button
             variant="text"
             onClick={() => setSelectedSub(null)}
@@ -990,7 +1002,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
 
         <Card elevation={0} sx={{ mb: 3, borderTop: '4px solid #013a12' }}>
           <CardContent>
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box>
                 <Typography variant="h6">
                   Submission File: {selectedSub.submsnNbr} — {selectedSub.orgName}
@@ -1068,7 +1080,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2.5} flexWrap="wrap" gap={2}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
             Submissions
@@ -1077,12 +1089,18 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
             Underwriting submissions and organization registry (UW_SUBMSN &amp; PT_PARTY)
           </Typography>
         </Box>
-        <Box display="flex" gap={1.5}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
           <Button variant="outlined" onClick={() => setSubTab(1)}>
             Search Organizations
           </Button>
-          <Button variant="contained" color="primary" startIcon={<Plus size={16} />} onClick={() => setOpenAddOrg(true)}>
-            Add Organization
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<Plus size={16} />}
+            disabled={!canAddOrganization}
+            onClick={() => setOpenAddOrg(true)}
+          >
+            {canAddOrganization ? 'Add Organization' : 'Add Organization (Restricted)'}
           </Button>
         </Box>
       </Box>
@@ -1149,9 +1167,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
                 e.preventDefault();
                 loadParties(partySearch);
               }}
-              display="flex"
-              gap={2}
-              mb={2.5}
+              sx={{ display: 'flex', gap: 2, mb: 2.5 }}
             >
               <TextField
                 size="small"
@@ -1203,18 +1219,20 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
               </Table>
             </TableContainer>
 
-            <Box mt={2.5}>
+            <Box sx={{ mt: 2.5 }}>
               <Button
                 variant="contained"
                 color="primary"
                 fullWidth
                 size="large"
-                disabled={!selectedParty}
+                disabled={!selectedParty || !canCreateSubmission}
                 onClick={handleCreateSubmissionForSelected}
               >
-                {selectedParty
-                  ? `Create Submission for Selected Organization (${selectedParty.name})`
-                  : 'Create Submission for Selected Organization'}
+                {!canCreateSubmission
+                  ? `Create Submission Restricted for Role (${activeRole?.roleName})`
+                  : selectedParty
+                    ? `Create Submission for Selected Organization (${selectedParty.name})`
+                    : 'Create Submission for Selected Organization'}
               </Button>
             </Box>
           </CardContent>
@@ -1247,9 +1265,10 @@ const SubmissionsView = ({ apiFetch, activeTenantId }) => {
 };
 
 // --- 4. Claims View ---
-const ClaimsView = ({ apiFetch, activeTenantId }) => {
+const ClaimsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [claims, setClaims] = useState([]);
   const [openNewClaim, setOpenNewClaim] = useState(false);
+  const canReportClaim = activeRole ? activeRole.canReportClaim !== false : true;
   const [newClaim, setNewClaim] = useState({
     policyNbr: 'POL-2026-8832',
     insuredName: 'TechSolutions Corp',
@@ -1289,7 +1308,7 @@ const ClaimsView = ({ apiFetch, activeTenantId }) => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
           <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
             Claims
@@ -1302,9 +1321,10 @@ const ClaimsView = ({ apiFetch, activeTenantId }) => {
           variant="contained"
           color="primary"
           startIcon={<Plus size={16} />}
+          disabled={!canReportClaim}
           onClick={() => setOpenNewClaim(true)}
         >
-          Report Claim
+          {canReportClaim ? 'Report Claim' : 'Report Claim (Restricted)'}
         </Button>
       </Box>
 
@@ -1426,8 +1446,29 @@ const DiagnosticsView = ({
     tenantId: '',
     tenantName: '',
     dbServerName: 'dbtst.ad.ortaleza.com',
-    dbCatalogName: ''
+    dbCatalogName: 'HELIOS2_TST',
+    primaryColor: '#013a12',
+    accentColor: '#f59e0b',
+    brandTitle: 'Helios',
+    brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
+    enabledModules: 'dashboard,policy,submissions,claims,diagnostics'
   });
+
+  const themePresets = [
+    { label: 'Forest Green (Default)', primary: '#013a12', accent: '#f59e0b' },
+    { label: 'Royal Navy', primary: '#0f2942', accent: '#38bdf8' },
+    { label: 'Burgundy Executive', primary: '#4c0519', accent: '#fb7185' },
+    { label: 'Deep Indigo', primary: '#1e1b4b', accent: '#a78bfa' },
+    { label: 'Slate Charcoal', primary: '#0f172a', accent: '#10b981' }
+  ];
+
+  const allModuleOptions = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'policy', label: 'Policies' },
+    { id: 'submissions', label: 'Submissions' },
+    { id: 'claims', label: 'Claims' },
+    { id: 'diagnostics', label: 'Diagnostics' }
+  ];
 
   const loadDiagnostics = useCallback(async () => {
     setLoading(true);
@@ -1445,6 +1486,32 @@ const DiagnosticsView = ({
     loadDiagnostics();
   }, [loadDiagnostics, activeTenantId]);
 
+  const handleOpenEditTenant = (t) => {
+    setNewTenant({
+      tenantId: String(t.tenantId),
+      tenantName: t.tenantName || '',
+      dbServerName: t.dbServerName || 'dbtst.ad.ortaleza.com',
+      dbCatalogName: t.dbCatalogName || 'HELIOS2_TST',
+      primaryColor: t.primaryColor || '#013a12',
+      accentColor: t.accentColor || '#f59e0b',
+      brandTitle: t.brandTitle || 'Helios',
+      brandSubtitle: t.brandSubtitle || 'INSURANCE MANAGEMENT SUITE',
+      enabledModules: t.enabledModules || 'dashboard,policy,submissions,claims,diagnostics'
+    });
+    setOpenAddTenant(true);
+  };
+
+  const toggleModuleInForm = (modId) => {
+    if (modId === 'dashboard' || modId === 'diagnostics') return; // Keep core navigation accessible
+    const currentList = (newTenant.enabledModules || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const exists = currentList.includes(modId);
+    const nextList = exists ? currentList.filter((m) => m !== modId) : [...currentList, modId];
+    setNewTenant({ ...newTenant, enabledModules: nextList.join(',') });
+  };
+
   const handleSaveTenant = async (e) => {
     e.preventDefault();
     try {
@@ -1454,11 +1521,15 @@ const DiagnosticsView = ({
           tenantId: Number(newTenant.tenantId),
           tenantName: newTenant.tenantName.trim(),
           dbServerName: newTenant.dbServerName.trim(),
-          dbCatalogName: newTenant.dbCatalogName.trim()
+          dbCatalogName: newTenant.dbCatalogName.trim(),
+          primaryColor: newTenant.primaryColor,
+          accentColor: newTenant.accentColor,
+          brandTitle: newTenant.brandTitle.trim(),
+          brandSubtitle: newTenant.brandSubtitle.trim(),
+          enabledModules: newTenant.enabledModules
         })
       });
       setOpenAddTenant(false);
-      setNewTenant({ tenantId: '', tenantName: '', dbServerName: 'dbtst.ad.ortaleza.com', dbCatalogName: '' });
       await reloadTenants();
       await loadDiagnostics();
     } catch (err) {
@@ -1468,20 +1539,33 @@ const DiagnosticsView = ({
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={2}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
             Multi-Tenant &amp; SQL Diagnostics
           </Typography>
           <Typography variant="body2" sx={{ color: '#64748b' }}>
-            Live connection telemetry for MSTR_DATA and active tenant SQL Server catalogs
+            Live connection telemetry and per-tenant UI customization stored in MSTR_DATA
           </Typography>
         </Box>
-        <Box display="flex" gap={1.5}>
+        <Box sx={{ display: 'flex', gap: 1.5 }}>
           <Button
             variant="outlined"
             startIcon={<Plus size={16} />}
-            onClick={() => setOpenAddTenant(true)}
+            onClick={() => {
+              setNewTenant({
+                tenantId: '',
+                tenantName: '',
+                dbServerName: 'dbtst.ad.ortaleza.com',
+                dbCatalogName: 'HELIOS2_TST',
+                primaryColor: '#013a12',
+                accentColor: '#f59e0b',
+                brandTitle: 'Helios',
+                brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
+                enabledModules: 'dashboard,policy,submissions,claims,diagnostics'
+              });
+              setOpenAddTenant(true);
+            }}
           >
             Register Tenant
           </Button>
@@ -1505,7 +1589,7 @@ const DiagnosticsView = ({
           </CardContent>
         </Card>
       ) : (
-        <Box display="flex" flexDirection="column" gap={3}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Runtime Environment */}
           <Card elevation={0}>
             <CardContent>
@@ -1545,7 +1629,7 @@ const DiagnosticsView = ({
             <Grid size={{ xs: 12, md: 6 }}>
               <Card elevation={0} sx={{ height: '100%', borderTop: '4px solid #013a12' }}>
                 <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                     <Typography variant="h6">1. Master Multi-Tenant DB (MSTR_DATA)</Typography>
                     <StatusPill status={diag.masterDatabase?.connected ? 'Completed' : 'Urgent'} />
                   </Box>
@@ -1586,7 +1670,7 @@ const DiagnosticsView = ({
             <Grid size={{ xs: 12, md: 6 }}>
               <Card elevation={0} sx={{ height: '100%', borderTop: '4px solid #005b7f' }}>
                 <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                     <Typography variant="h6">
                       2. Active Tenant DB (Tenant #{diag.activeTenantId}: {diag.activeTenantConfig?.dbCatalogName})
                     </Typography>
@@ -1631,7 +1715,7 @@ const DiagnosticsView = ({
           <Card elevation={0}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                Registered Tenants in <code>MSTR_DATA.dbo.TENANT_DB_CONFIG</code>
+                Registered Tenants &amp; UI Customization in <code>MSTR_DATA.dbo.TENANT_DB_CONFIG</code>
               </Typography>
               <TableContainer component={Paper} elevation={0} variant="outlined">
                 <Table size="small">
@@ -1639,36 +1723,76 @@ const DiagnosticsView = ({
                     <TableRow>
                       <TableCell sx={{ fontWeight: 700 }}>TENANT_ID</TableCell>
                       <TableCell sx={{ fontWeight: 700 }}>TENANT_NAME</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>DB_SERVER_NM</TableCell>
                       <TableCell sx={{ fontWeight: 700 }}>DB_CATALOG_NM</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 700 }}>SESSION</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>UI THEME &amp; BRANDING</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>ENABLED MODULES</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>ACTIONS</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {tenants.map((t) => {
                       const isActive = t.tenantId === Number(activeTenantId);
+                      const pColor = t.primaryColor || '#013a12';
+                      const aColor = t.accentColor || '#f59e0b';
                       return (
                         <TableRow key={t.tenantId} selected={isActive}>
                           <TableCell>{t.tenantId}</TableCell>
                           <TableCell sx={{ fontWeight: 600 }}>{t.tenantName}</TableCell>
                           <TableCell>
-                            <code>{t.dbServerName}</code>
-                          </TableCell>
-                          <TableCell>
                             <code>{t.dbCatalogName}</code>
                           </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Box
+                                sx={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: '4px',
+                                  backgroundColor: pColor,
+                                  border: `2px solid ${aColor}`,
+                                  flexShrink: 0
+                                }}
+                              />
+                              <Box>
+                                <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', lineHeight: 1.1 }}>
+                                  {t.brandTitle || 'Helios'}
+                                </Typography>
+                                <Typography variant="caption" color="textSecondary" sx={{ fontSize: '0.68rem' }}>
+                                  {t.brandSubtitle || 'INSURANCE MANAGEMENT SUITE'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                              {(t.enabledModules || 'dashboard,policy,submissions,claims,diagnostics')
+                                .split(',')
+                                .map((m) => (
+                                  <Chip key={m} label={m} size="small" sx={{ fontSize: '0.68rem', height: 20 }} />
+                                ))}
+                            </Box>
+                          </TableCell>
                           <TableCell align="right">
-                            {isActive ? (
-                              <StatusPill status="Active" />
-                            ) : (
+                            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, alignItems: 'center' }}>
                               <Button
                                 size="small"
-                                variant="outlined"
-                                onClick={() => setActiveTenantId(t.tenantId)}
+                                variant="text"
+                                onClick={() => handleOpenEditTenant(t)}
                               >
-                                Switch Tenant
+                                Customize UI
                               </Button>
-                            )}
+                              {isActive ? (
+                                <StatusPill status="Active" />
+                              ) : (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => setActiveTenantId(t.tenantId)}
+                                >
+                                  Switch Tenant
+                                </Button>
+                              )}
+                            </Box>
                           </TableCell>
                         </TableRow>
                       );
@@ -1681,48 +1805,146 @@ const DiagnosticsView = ({
         </Box>
       )}
 
-      <Dialog open={openAddTenant} onClose={() => setOpenAddTenant(false)} maxWidth="xs" fullWidth>
+      <Dialog open={openAddTenant} onClose={() => setOpenAddTenant(false)} maxWidth="sm" fullWidth>
         <form onSubmit={handleSaveTenant}>
-          <DialogTitle>Register / Update Tenant in MSTR_DATA</DialogTitle>
+          <DialogTitle>Register / Customize Tenant UI in MSTR_DATA</DialogTitle>
           <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <TextField
-              label="Tenant ID (INT)"
-              type="number"
-              size="small"
-              fullWidth
-              required
-              value={newTenant.tenantId}
-              onChange={(e) => setNewTenant({ ...newTenant, tenantId: e.target.value })}
-            />
-            <TextField
-              label="Tenant Name"
-              size="small"
-              fullWidth
-              required
-              value={newTenant.tenantName}
-              onChange={(e) => setNewTenant({ ...newTenant, tenantName: e.target.value })}
-            />
-            <TextField
-              label="SQL Server Host (DB_SERVER_NM)"
-              size="small"
-              fullWidth
-              required
-              value={newTenant.dbServerName}
-              onChange={(e) => setNewTenant({ ...newTenant, dbServerName: e.target.value })}
-            />
-            <TextField
-              label="Database Catalog (DB_CATALOG_NM)"
-              size="small"
-              fullWidth
-              required
-              value={newTenant.dbCatalogName}
-              onChange={(e) => setNewTenant({ ...newTenant, dbCatalogName: e.target.value })}
-            />
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Tenant ID (INT)"
+                  type="number"
+                  size="small"
+                  fullWidth
+                  required
+                  value={newTenant.tenantId}
+                  onChange={(e) => setNewTenant({ ...newTenant, tenantId: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>
+                <TextField
+                  label="Tenant Name"
+                  size="small"
+                  fullWidth
+                  required
+                  value={newTenant.tenantName}
+                  onChange={(e) => setNewTenant({ ...newTenant, tenantName: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="SQL Server Host (DB_SERVER_NM)"
+                  size="small"
+                  fullWidth
+                  required
+                  value={newTenant.dbServerName}
+                  onChange={(e) => setNewTenant({ ...newTenant, dbServerName: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Database Catalog (DB_CATALOG_NM)"
+                  size="small"
+                  fullWidth
+                  required
+                  value={newTenant.dbCatalogName}
+                  onChange={(e) => setNewTenant({ ...newTenant, dbCatalogName: e.target.value })}
+                />
+              </Grid>
+            </Grid>
+
+            <Divider />
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+              Frontend Branding &amp; Theme Customization
+            </Typography>
+
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {themePresets.map((preset) => (
+                <Chip
+                  key={preset.label}
+                  label={preset.label}
+                  onClick={() =>
+                    setNewTenant({
+                      ...newTenant,
+                      primaryColor: preset.primary,
+                      accentColor: preset.accent
+                    })
+                  }
+                  sx={{
+                    backgroundColor: preset.primary,
+                    color: '#ffffff',
+                    fontWeight: 600,
+                    fontSize: '0.72rem',
+                    border: newTenant.primaryColor === preset.primary ? `2px solid ${preset.accent}` : 'none',
+                    '&:hover': { opacity: 0.9, backgroundColor: preset.primary }
+                  }}
+                />
+              ))}
+            </Box>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Sidebar Primary Color (Hex)"
+                  size="small"
+                  fullWidth
+                  value={newTenant.primaryColor}
+                  onChange={(e) => setNewTenant({ ...newTenant, primaryColor: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Logo Accent Color (Hex)"
+                  size="small"
+                  fullWidth
+                  value={newTenant.accentColor}
+                  onChange={(e) => setNewTenant({ ...newTenant, accentColor: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Sidebar Brand Title"
+                  size="small"
+                  fullWidth
+                  value={newTenant.brandTitle}
+                  onChange={(e) => setNewTenant({ ...newTenant, brandTitle: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Sidebar Brand Subtitle"
+                  size="small"
+                  fullWidth
+                  value={newTenant.brandSubtitle}
+                  onChange={(e) => setNewTenant({ ...newTenant, brandSubtitle: e.target.value })}
+                />
+              </Grid>
+            </Grid>
+
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: '#64748b', display: 'block', mb: 1 }}>
+                Enabled Sidebar Navigation Modules (Click to toggle):
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {allModuleOptions.map((mod) => {
+                  const enabled = (newTenant.enabledModules || '').split(',').includes(mod.id);
+                  return (
+                    <Chip
+                      key={mod.id}
+                      label={mod.label}
+                      color={enabled ? 'primary' : 'default'}
+                      variant={enabled ? 'filled' : 'outlined'}
+                      onClick={() => toggleModuleInForm(mod.id)}
+                    />
+                  );
+                })}
+              </Box>
+            </Box>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setOpenAddTenant(false)}>Cancel</Button>
             <Button type="submit" variant="contained" color="primary">
-              Save Tenant
+              Save Tenant Configuration
             </Button>
           </DialogActions>
         </form>
@@ -1731,15 +1953,49 @@ const DiagnosticsView = ({
   );
 };
 
-// --- Main Application Shell (Matches Uploaded Design Screenshot) ---
+// --- Main Application Shell (Matches Uploaded Design Screenshot + Per-Tenant & Per-Role UI Customization) ---
 export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tenants, setTenants] = useState([
-    { tenantId: 1, tenantName: 'Acme Corp', dbCatalogName: 'HELIOS2_TST' },
-    { tenantId: 2, tenantName: 'Global Risk Partners', dbCatalogName: 'HELIOS_TST' }
+    {
+      tenantId: 1,
+      tenantName: 'Acme Corp',
+      dbCatalogName: 'HELIOS2_TST',
+      primaryColor: '#013a12',
+      accentColor: '#f59e0b',
+      brandTitle: 'Helios',
+      brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
+      enabledModules: 'dashboard,policy,submissions,claims,diagnostics'
+    },
+    {
+      tenantId: 2,
+      tenantName: 'Global Risk Partners',
+      dbCatalogName: 'HELIOS_TST',
+      primaryColor: '#0f2942',
+      accentColor: '#38bdf8',
+      brandTitle: 'Helios',
+      brandSubtitle: 'GLOBAL RISK UNDERWRITING',
+      enabledModules: 'dashboard,policy,submissions,claims,diagnostics'
+    }
+  ]);
+  const [roles, setRoles] = useState([
+    {
+      roleId: 1,
+      tenantId: 1,
+      roleCode: 'EXECUTIVE',
+      roleName: 'Portfolio Executive',
+      allowedModules: 'dashboard,policy,submissions,claims',
+      defaultTaskFilter: '',
+      canCreateSubmission: true,
+      canAddOrganization: true,
+      canReportClaim: true
+    }
   ]);
   const [activeTenantId, setActiveTenantId] = useState(1);
+  const [activeRoleCode, setActiveRoleCode] = useState('EXECUTIVE');
   const [tenantMenuAnchor, setTenantMenuAnchor] = useState(null);
+  const [roleMenuAnchor, setRoleMenuAnchor] = useState(null);
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -1769,11 +2025,67 @@ export default function App() {
     }
   }, [apiFetch]);
 
+  const reloadRoles = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/roles?tenantId=${activeTenantId}`);
+      if (Array.isArray(data) && data.length > 0) {
+        setRoles(data);
+        setActiveRoleCode((prev) =>
+          data.some((r) => r.roleCode === prev) ? prev : data[0].roleCode
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load MSTR_DATA roles:', err);
+    }
+  }, [apiFetch, activeTenantId]);
+
   useEffect(() => {
     reloadTenants();
-  }, [reloadTenants]);
+    reloadRoles();
+  }, [reloadTenants, reloadRoles]);
 
   const currentTenant = tenants.find((t) => t.tenantId === Number(activeTenantId)) || tenants[0];
+  const activeRole = roles.find((r) => r.roleCode === activeRoleCode) || roles[0];
+  const sidebarColor = currentTenant?.primaryColor || '#013a12';
+  const accentColor = currentTenant?.accentColor || '#f59e0b';
+  const brandTitle = currentTenant?.brandTitle || 'Helios';
+  const brandSubtitle = currentTenant?.brandSubtitle || 'INSURANCE MANAGEMENT SUITE';
+  const drawerWidth = sidebarCollapsed ? 72 : 250;
+
+  const dynamicTheme = useMemo(
+    () => buildTenantTheme(sidebarColor, accentColor),
+    [sidebarColor, accentColor]
+  );
+
+  const allNavItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={18} /> },
+    { id: 'policy', label: 'Policies', icon: <FileText size={18} /> },
+    { id: 'submissions', label: 'Submissions', icon: <Files size={18} /> },
+    { id: 'claims', label: 'Claims', icon: <AlertCircle size={18} /> }
+  ];
+
+  const tenantModuleSet = new Set(
+    (currentTenant?.enabledModules || 'dashboard,policy,submissions,claims')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  const roleModuleSet = new Set(
+    (activeRole?.allowedModules || 'dashboard,policy,submissions,claims')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+  const navItems = allNavItems.filter(
+    (item) => item.id === 'dashboard' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
+  );
+
+  useEffect(() => {
+    if (!navItems.some((item) => item.id === activeView)) {
+      setActiveView('dashboard');
+    }
+  }, [navItems, activeView]);
 
   const renderView = () => {
     switch (activeView) {
@@ -1782,30 +2094,24 @@ export default function App() {
           <DashboardView
             apiFetch={apiFetch}
             activeTenantId={activeTenantId}
+            currentTenant={currentTenant}
+            activeRole={activeRole}
             onNavigate={setActiveView}
           />
         );
       case 'policy':
         return <PoliciesView apiFetch={apiFetch} activeTenantId={activeTenantId} />;
       case 'submissions':
-        return <SubmissionsView apiFetch={apiFetch} activeTenantId={activeTenantId} />;
+        return <SubmissionsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} />;
       case 'claims':
-        return <ClaimsView apiFetch={apiFetch} activeTenantId={activeTenantId} />;
-      case 'diagnostics':
-        return (
-          <DiagnosticsView
-            apiFetch={apiFetch}
-            activeTenantId={activeTenantId}
-            setActiveTenantId={setActiveTenantId}
-            tenants={tenants}
-            reloadTenants={reloadTenants}
-          />
-        );
+        return <ClaimsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} />;
       default:
         return (
           <DashboardView
             apiFetch={apiFetch}
             activeTenantId={activeTenantId}
+            currentTenant={currentTenant}
+            activeRole={activeRole}
             onNavigate={setActiveView}
           />
         );
@@ -1817,76 +2123,112 @@ export default function App() {
       dashboard: 'Dashboard',
       policy: 'Policies',
       submissions: 'Submissions',
-      claims: 'Claims',
-      diagnostics: 'Diagnostics'
+      claims: 'Claims'
     };
     return map[activeView] || 'Dashboard';
   };
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={18} /> },
-    { id: 'policy', label: 'Policies', icon: <FileText size={18} /> },
-    { id: 'submissions', label: 'Submissions', icon: <Files size={18} /> },
-    { id: 'claims', label: 'Claims', icon: <AlertCircle size={18} /> },
-    { id: 'diagnostics', label: 'Diagnostics', icon: <Activity size={18} /> }
-  ];
-
   return (
-    <ThemeProvider theme={heliosTheme}>
+    <ThemeProvider theme={dynamicTheme}>
       <CssBaseline />
       <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        {/* Left Solid Dark Green Sidebar */}
+        {/* Left Dynamic Tenant-Themed Collapsible Sidebar */}
         <Drawer
           variant="permanent"
           sx={{
-            width: 250,
+            width: drawerWidth,
             flexShrink: 0,
+            transition: 'width 0.2s ease',
             [`& .MuiDrawer-paper`]: {
-              width: 250,
+              width: drawerWidth,
               boxSizing: 'border-box',
-              backgroundColor: '#013a12',
+              backgroundColor: sidebarColor,
               color: '#ffffff',
-              borderRight: 'none'
+              borderRight: 'none',
+              overflowX: 'hidden',
+              transition: 'width 0.2s ease, background-color 0.25s ease'
             }
           }}
         >
           {/* Brand Header */}
-          <Box sx={{ px: 2.5, pt: 2.5, pb: 2 }}>
-            <Box display="flex" alignItems="center" justifyContent="space-between" mb={0.5}>
-              <Box display="flex" alignItems="center" gap={1.25}>
-                <HeliosBrandIcon />
-                <Typography sx={{ fontSize: '1.35rem', fontWeight: 700, color: '#ffffff', letterSpacing: '0.01em' }}>
-                  Helios
-                </Typography>
-              </Box>
-              <IconButton size="small" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+          <Box sx={{ px: sidebarCollapsed ? 1.5 : 2.5, pt: 2.5, pb: 2 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+                mb: sidebarCollapsed ? 0 : 0.5
+              }}
+            >
+              {!sidebarCollapsed && (
+                <Box
+                  onClick={() => setActiveView('dashboard')}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.25,
+                    cursor: 'pointer',
+                    minWidth: 0
+                  }}
+                >
+                  <HeliosBrandIcon primaryColor={sidebarColor} accentColor={accentColor} />
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontSize: '1.35rem',
+                      fontWeight: 700,
+                      color: '#ffffff',
+                      letterSpacing: '0.01em',
+                      lineHeight: 1.2
+                    }}
+                  >
+                    {brandTitle}
+                  </Typography>
+                </Box>
+              )}
+              <IconButton
+                size="small"
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                sx={{
+                  color: 'rgba(255,255,255,0.75)',
+                  '&:hover': {
+                    color: '#ffffff',
+                    backgroundColor: 'rgba(255,255,255,0.1)'
+                  }
+                }}
+              >
                 <MenuIcon size={18} />
               </IconButton>
             </Box>
-            <Typography
-              sx={{
-                fontSize: '0.62rem',
-                fontWeight: 600,
-                letterSpacing: '0.12em',
-                color: 'rgba(255, 255, 255, 0.55)',
-                textTransform: 'uppercase'
-              }}
-            >
-              INSURANCE MANAGEMENT SUITE
-            </Typography>
+            {!sidebarCollapsed && (
+              <Typography
+                noWrap
+                sx={{
+                  fontSize: '0.62rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.12em',
+                  color: 'rgba(255, 255, 255, 0.55)',
+                  textTransform: 'uppercase'
+                }}
+              >
+                {brandSubtitle}
+              </Typography>
+            )}
           </Box>
 
           <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.08)' }} />
 
           {/* Dark Translucent Tenant Selector Box */}
-          <Box sx={{ px: 2, py: 2 }}>
+          <Box sx={{ px: sidebarCollapsed ? 1.25 : 2, py: 2 }}>
             <Box
+              title={`Tenant: ${getTenantShortLabel(currentTenant)}`}
               onClick={(e) => setTenantMenuAnchor(e.currentTarget)}
               sx={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                p: 1.25,
+                justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+                p: sidebarCollapsed ? 0.9 : 1.25,
                 borderRadius: '10px',
                 backgroundColor: 'rgba(255, 255, 255, 0.06)',
                 border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -1897,7 +2239,7 @@ export default function App() {
                 }
               }}
             >
-              <Box display="flex" alignItems="center" gap={1.25} sx={{ overflow: 'hidden' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, overflow: 'hidden' }}>
                 <Avatar
                   sx={{
                     width: 32,
@@ -1910,32 +2252,34 @@ export default function App() {
                 >
                   {getTenantInitials(currentTenant)}
                 </Avatar>
-                <Box sx={{ overflow: 'hidden' }}>
-                  <Typography
-                    sx={{
-                      fontSize: '0.62rem',
-                      fontWeight: 600,
-                      letterSpacing: '0.08em',
-                      color: 'rgba(255, 255, 255, 0.55)',
-                      lineHeight: 1.1
-                    }}
-                  >
-                    TENANT
-                  </Typography>
-                  <Typography
-                    noWrap
-                    sx={{
-                      fontSize: '0.84rem',
-                      fontWeight: 600,
-                      color: '#ffffff',
-                      lineHeight: 1.3
-                    }}
-                  >
-                    {getTenantShortLabel(currentTenant)}
-                  </Typography>
-                </Box>
+                {!sidebarCollapsed && (
+                  <Box sx={{ overflow: 'hidden' }}>
+                    <Typography
+                      sx={{
+                        fontSize: '0.62rem',
+                        fontWeight: 600,
+                        letterSpacing: '0.08em',
+                        color: 'rgba(255, 255, 255, 0.55)',
+                        lineHeight: 1.1
+                      }}
+                    >
+                      TENANT
+                    </Typography>
+                    <Typography
+                      noWrap
+                      sx={{
+                        fontSize: '0.84rem',
+                        fontWeight: 600,
+                        color: '#ffffff',
+                        lineHeight: 1.3
+                      }}
+                    >
+                      {getTenantShortLabel(currentTenant)}
+                    </Typography>
+                  </Box>
+                )}
               </Box>
-              <ChevronsUpDown size={16} color="rgba(255, 255, 255, 0.55)" />
+              {!sidebarCollapsed && <ChevronsUpDown size={16} color="rgba(255, 255, 255, 0.55)" />}
             </Box>
 
             <MuiMenu
@@ -1944,7 +2288,7 @@ export default function App() {
               onClose={() => setTenantMenuAnchor(null)}
               slotProps={{
                 paper: {
-                  sx: { width: 220, mt: 0.5 }
+                  sx: { width: 230, mt: 0.5 }
                 }
               }}
             >
@@ -1957,13 +2301,24 @@ export default function App() {
                     setTenantMenuAnchor(null);
                   }}
                 >
-                  <Box>
-                    <Typography variant="body2" fontWeight={600}>
-                      {getTenantShortLabel(t)}
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      DB: {t.dbCatalogName}
-                    </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        backgroundColor: t.primaryColor || '#013a12',
+                        border: `2px solid ${t.accentColor || '#f59e0b'}`
+                      }}
+                    />
+                    <Box>
+                      <Typography variant="body2" fontWeight={600}>
+                        {getTenantShortLabel(t)}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        DB: {t.dbCatalogName}
+                      </Typography>
+                    </Box>
                   </Box>
                 </MenuItem>
               ))}
@@ -1971,19 +2326,21 @@ export default function App() {
           </Box>
 
           {/* Sidebar Navigation Menu */}
-          <Box sx={{ px: 1.75, mt: 0.5 }}>
+          <Box sx={{ px: sidebarCollapsed ? 1 : 1.75, mt: 0.5 }}>
             <List disablePadding>
               {navItems.map((item) => {
                 const isSelected = activeView === item.id;
                 return (
                   <ListItem key={item.id} disablePadding sx={{ mb: 0.6 }}>
                     <ListItemButton
+                      title={sidebarCollapsed ? item.label : undefined}
                       selected={isSelected}
                       onClick={() => setActiveView(item.id)}
                       sx={{
                         borderRadius: '8px',
                         py: 1.1,
-                        px: 1.5,
+                        px: sidebarCollapsed ? 1.25 : 1.5,
+                        justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
                         color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.72)',
                         '&.Mui-selected': {
                           backgroundColor: 'rgba(255, 255, 255, 0.14)',
@@ -2000,19 +2357,22 @@ export default function App() {
                     >
                       <ListItemIcon
                         sx={{
-                          minWidth: 34,
+                          minWidth: sidebarCollapsed ? 'auto' : 34,
+                          justifyContent: 'center',
                           color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.72)'
                         }}
                       >
                         {item.icon}
                       </ListItemIcon>
-                      <ListItemText
-                        primary={item.label}
-                        primaryTypographyProps={{
-                          fontSize: '0.88rem',
-                          fontWeight: isSelected ? 600 : 500
-                        }}
-                      />
+                      {!sidebarCollapsed && (
+                        <ListItemText
+                          primary={item.label}
+                          primaryTypographyProps={{
+                            fontSize: '0.88rem',
+                            fontWeight: isSelected ? 600 : 500
+                          }}
+                        />
+                      )}
                     </ListItemButton>
                   </ListItem>
                 );
@@ -2037,7 +2397,7 @@ export default function App() {
           >
             <Toolbar sx={{ justifyContent: 'space-between', minHeight: '56px !important', px: 3.5 }}>
               {/* Breadcrumb: Home > Dashboard */}
-              <Box display="flex" alignItems="center" gap={1}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Typography
                   onClick={() => setActiveView('dashboard')}
                   sx={{
@@ -2055,8 +2415,58 @@ export default function App() {
                 </Typography>
               </Box>
 
-              {/* Right Notification Bell */}
-              <Box display="flex" alignItems="center" gap={1}>
+              {/* Right Active Role Switcher & Notification Bell */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Box
+                  onClick={(e) => setRoleMenuAnchor(e.currentTarget)}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    px: 1.5,
+                    py: 0.5,
+                    borderRadius: '999px',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    cursor: 'pointer',
+                    '&:hover': { backgroundColor: '#f1f5f9' }
+                  }}
+                >
+                  <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                    Role:
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 600, color: sidebarColor }}>
+                    {activeRole?.roleName || 'Portfolio Executive'}
+                  </Typography>
+                  <ChevronsUpDown size={14} color="#64748b" />
+                </Box>
+
+                <MuiMenu
+                  anchorEl={roleMenuAnchor}
+                  open={Boolean(roleMenuAnchor)}
+                  onClose={() => setRoleMenuAnchor(null)}
+                >
+                  {roles.map((r) => (
+                    <MenuItem
+                      key={r.roleCode}
+                      selected={r.roleCode === activeRole?.roleCode}
+                      onClick={() => {
+                        setActiveRoleCode(r.roleCode);
+                        setRoleMenuAnchor(null);
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>
+                          {r.roleName}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          Modules: {r.allowedModules}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </MuiMenu>
+
                 <IconButton size="small" sx={{ position: 'relative', color: '#64748b' }}>
                   <Bell size={18} />
                   <Box
