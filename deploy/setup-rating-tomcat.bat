@@ -63,3 +63,4 @@ echo   - Next Step     : Run install-rating-service.bat as Administrator
 echo ============================================================================
 pause
 endlocal
+

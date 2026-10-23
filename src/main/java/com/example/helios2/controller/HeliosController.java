@@ -18,6 +18,7 @@ import com.example.helios2.service.HeliosService;
 import com.example.helios2.service.HeliosService.ClaimDto;
 import com.example.helios2.service.HeliosService.PartyDto;
 import com.example.helios2.service.HeliosService.PolicyDto;
+import com.example.helios2.service.HeliosService.QuoteDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
 import com.example.helios2.service.HeliosService.TaskDto;
 import com.example.helios2.service.TenantRegistryService;
@@ -119,6 +120,50 @@ public class HeliosController {
                 request.limit(),
                 request.retention(),
                 request.premium()
+        );
+        return ResponseEntity.ok(created);
+    }
+
+    @GetMapping("/quotes")
+    public List<QuoteDto> getQuotes(@RequestParam(name = "submsnId", required = false) Integer submsnId) {
+        if (submsnId != null) {
+            return heliosService.getQuotesBySubmission(submsnId);
+        }
+        return heliosService.getAllQuotes();
+    }
+
+    public record CreateQuoteRequest(
+            Integer submsnId,
+            String productCode,
+            String stateCode,
+            String exposureVal,
+            String limitAmt,
+            String retentionAmt,
+            String scheduleMod,
+            String premium,
+            String serffTrackingNbr,
+            String baseRate,
+            String calcTrace,
+            String status
+    ) {
+    }
+
+    @PostMapping("/quotes")
+    public ResponseEntity<QuoteDto> createQuote(@RequestBody CreateQuoteRequest req) {
+        int subId = (req.submsnId() != null) ? req.submsnId() : 0;
+        QuoteDto created = heliosService.createRatedQuote(
+                subId,
+                req.productCode(),
+                req.stateCode(),
+                req.exposureVal(),
+                req.limitAmt(),
+                req.retentionAmt(),
+                req.scheduleMod(),
+                req.premium(),
+                req.serffTrackingNbr(),
+                req.baseRate(),
+                req.calcTrace(),
+                req.status()
         );
         return ResponseEntity.ok(created);
     }

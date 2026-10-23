@@ -84,3 +84,4 @@ echo   - Health Check: http://127.0.0.1:8084/helios-rating/api/v1/diagnostics
 echo ============================================================================
 pause
 endlocal
+

@@ -1,5 +1,6 @@
 package com.example.helios2.service;
 
+import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
@@ -62,8 +63,20 @@ public class HeliosService {
             String quoteId,
             String premium,
             String status,
-            String generated
+            String generated,
+            String productCode,
+            String stateCode,
+            String exposureVal,
+            String limitAmt,
+            String retentionAmt,
+            String scheduleMod,
+            String serffTrackingNbr,
+            String baseRate,
+            String calcTrace
     ) {
+        public QuoteDto(String quoteId, String premium, String status, String generated) {
+            this(quoteId, premium, status, generated, null, null, null, null, null, null, null, null, null);
+        }
     }
 
     public record FileLevelInfoDto(
@@ -199,6 +212,20 @@ public class HeliosService {
                         STATUS VARCHAR(50) NOT NULL,
                         GENERATED_DT VARCHAR(20) NOT NULL
                     );
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'PRODUCT_CODE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD PRODUCT_CODE VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'STATE_CODE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD STATE_CODE VARCHAR(10) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'EXPOSURE_VAL') IS NULL ALTER TABLE dbo.UW_QUOTE ADD EXPOSURE_VAL NUMERIC(18,2) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'CLASS_CODE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD CLASS_CODE VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'TERRITORY_CODE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD TERRITORY_CODE VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'LIMIT_AMT') IS NULL ALTER TABLE dbo.UW_QUOTE ADD LIMIT_AMT VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'RETENTION_AMT') IS NULL ALTER TABLE dbo.UW_QUOTE ADD RETENTION_AMT VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'SCHEDULE_MOD') IS NULL ALTER TABLE dbo.UW_QUOTE ADD SCHEDULE_MOD NUMERIC(5,2) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'SERFF_TRACKING_NBR') IS NULL ALTER TABLE dbo.UW_QUOTE ADD SERFF_TRACKING_NBR VARCHAR(100) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'FILING_VERSION') IS NULL ALTER TABLE dbo.UW_QUOTE ADD FILING_VERSION VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'BASE_RATE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD BASE_RATE NUMERIC(10,4) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'CALC_TRACE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD CALC_TRACE VARCHAR(MAX) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'ATTACHED_FORMS') IS NULL ALTER TABLE dbo.UW_QUOTE ADD ATTACHED_FORMS VARCHAR(MAX) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'UNDERWRITING_REFERRALS') IS NULL ALTER TABLE dbo.UW_QUOTE ADD UNDERWRITING_REFERRALS VARCHAR(MAX) NULL;
                     """);
 
             // 6. Ensure dbo.CLM_CLAIM exists
@@ -597,7 +624,10 @@ public class HeliosService {
     private Map<Integer, List<QuoteDto>> loadQuotesBySubmission() {
         Map<Integer, List<QuoteDto>> map = new LinkedHashMap<>();
         tenantJdbcTemplate.query("""
-                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT
+                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
+                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
                 FROM dbo.UW_QUOTE
                 ORDER BY QUOTE_ID ASC
                 """, rs -> {
@@ -606,10 +636,148 @@ public class HeliosService {
                     rs.getString("QUOTE_NBR"),
                     rs.getString("PREMIUM"),
                     rs.getString("STATUS"),
-                    rs.getString("GENERATED_DT")
+                    rs.getString("GENERATED_DT"),
+                    rs.getString("PRODUCT_CODE"),
+                    rs.getString("STATE_CODE"),
+                    rs.getString("EXPOSURE_VAL"),
+                    rs.getString("LIMIT_AMT"),
+                    rs.getString("RETENTION_AMT"),
+                    rs.getString("SCHEDULE_MOD"),
+                    rs.getString("SERFF_TRACKING_NBR"),
+                    rs.getString("BASE_RATE"),
+                    rs.getString("CALC_TRACE")
             ));
         });
         return map;
+    }
+
+    public List<QuoteDto> getAllQuotes() {
+        ensureTenantSchema();
+        List<QuoteDto> list = new ArrayList<>();
+        tenantJdbcTemplate.query("""
+                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
+                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
+                FROM dbo.UW_QUOTE
+                ORDER BY QUOTE_ID DESC
+                """, rs -> {
+            list.add(new QuoteDto(
+                    rs.getString("QUOTE_NBR"),
+                    rs.getString("PREMIUM"),
+                    rs.getString("STATUS"),
+                    rs.getString("GENERATED_DT"),
+                    rs.getString("PRODUCT_CODE"),
+                    rs.getString("STATE_CODE"),
+                    rs.getString("EXPOSURE_VAL"),
+                    rs.getString("LIMIT_AMT"),
+                    rs.getString("RETENTION_AMT"),
+                    rs.getString("SCHEDULE_MOD"),
+                    rs.getString("SERFF_TRACKING_NBR"),
+                    rs.getString("BASE_RATE"),
+                    rs.getString("CALC_TRACE")
+            ));
+        });
+        return list;
+    }
+
+    public List<QuoteDto> getQuotesBySubmission(int submsnId) {
+        ensureTenantSchema();
+        List<QuoteDto> list = new ArrayList<>();
+        tenantJdbcTemplate.query("""
+                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
+                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
+                FROM dbo.UW_QUOTE
+                WHERE SUBMSN_ID = ?
+                ORDER BY QUOTE_ID DESC
+                """, rs -> {
+            list.add(new QuoteDto(
+                    rs.getString("QUOTE_NBR"),
+                    rs.getString("PREMIUM"),
+                    rs.getString("STATUS"),
+                    rs.getString("GENERATED_DT"),
+                    rs.getString("PRODUCT_CODE"),
+                    rs.getString("STATE_CODE"),
+                    rs.getString("EXPOSURE_VAL"),
+                    rs.getString("LIMIT_AMT"),
+                    rs.getString("RETENTION_AMT"),
+                    rs.getString("SCHEDULE_MOD"),
+                    rs.getString("SERFF_TRACKING_NBR"),
+                    rs.getString("BASE_RATE"),
+                    rs.getString("CALC_TRACE")
+            ));
+        }, submsnId);
+        return list;
+    }
+
+    public QuoteDto createRatedQuote(
+            int submsnId,
+            String productCode,
+            String stateCode,
+            String exposureVal,
+            String limitAmt,
+            String retentionAmt,
+            String scheduleMod,
+            String premium,
+            String serffTrackingNbr,
+            String baseRate,
+            String calcTrace,
+            String status
+    ) {
+        ensureTenantSchema();
+        String today = LocalDate.now().toString();
+        String finalStatus = (status != null && !status.isBlank()) ? status : "Quoted";
+
+        Integer nextSeq = tenantJdbcTemplate.queryForObject(
+                "SELECT ISNULL(MAX(QUOTE_ID), 1000) + 1 FROM dbo.UW_QUOTE", Integer.class);
+        String quoteNbr = "Q-" + nextSeq;
+
+        BigDecimal expNum = null;
+        if (exposureVal != null && !exposureVal.isBlank()) {
+            try {
+                expNum = new BigDecimal(exposureVal.replaceAll("[^0-9.]", ""));
+            } catch (Exception ignored) {}
+        }
+        BigDecimal schedNum = null;
+        if (scheduleMod != null && !scheduleMod.isBlank()) {
+            try {
+                schedNum = new BigDecimal(scheduleMod.replaceAll("[^0-9.]", ""));
+            } catch (Exception ignored) {}
+        }
+        BigDecimal baseNum = null;
+        if (baseRate != null && !baseRate.isBlank()) {
+            try {
+                baseNum = new BigDecimal(baseRate.replaceAll("[^0-9.]", ""));
+            } catch (Exception ignored) {}
+        }
+
+        tenantJdbcTemplate.update("""
+                INSERT INTO dbo.UW_QUOTE (
+                    QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
+                    PRODUCT_CODE, STATE_CODE, EXPOSURE_VAL, LIMIT_AMT, RETENTION_AMT,
+                    SCHEDULE_MOD, SERFF_TRACKING_NBR, BASE_RATE, CALC_TRACE
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                quoteNbr, submsnId, premium, finalStatus, today,
+                productCode, stateCode, expNum, limitAmt, retentionAmt,
+                schedNum, serffTrackingNbr, baseNum, calcTrace
+        );
+
+        if (submsnId > 0) {
+            tenantJdbcTemplate.update("""
+                    UPDATE dbo.UW_SUBMSN
+                    SET STATUS = 'Quoted'
+                    WHERE SUBMSN_ID = ? AND STATUS IN ('Pending', 'Under Review')
+                    """, submsnId);
+        }
+
+        return new QuoteDto(
+                quoteNbr, premium, finalStatus, today,
+                productCode, stateCode, exposureVal, limitAmt, retentionAmt,
+                scheduleMod, serffTrackingNbr, baseRate, calcTrace
+        );
     }
 
     public List<SubmissionDto> getAllSubmissions() {
