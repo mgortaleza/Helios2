@@ -68,3 +68,4 @@ public class RatingEngineTest {
         System.out.println("Referrals: " + result.getUnderwritingReferrals());
     }
 }
+

@@ -113,6 +113,23 @@ public class HeliosService {
     ) {
     }
 
+    public record AppUserDto(
+            int userId,
+            int tenantId,
+            String username,
+            String email,
+            String displayName,
+            String roleCode,
+            String roleName,
+            String department,
+            String authProvider,
+            String externalSubjectId,
+            boolean active,
+            String createdDt,
+            String lastLoginDt
+    ) {
+    }
+
     public synchronized void ensureTenantSchema() {
         int tenantId = TenantContext.getTenantId();
         if (!initializedTenants.add(tenantId)) {
@@ -215,6 +232,30 @@ public class HeliosService {
                         RESERVE_AMT VARCHAR(50) NOT NULL,
                         DESCRIPTION VARCHAR(255) NULL
                     );
+                    """);
+
+            // 7. Ensure dbo.APP_USER exists
+            tenantJdbcTemplate.execute("""
+                    IF OBJECT_ID('dbo.APP_USER', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.APP_USER (
+                            USER_ID INT IDENTITY(1001,1) PRIMARY KEY,
+                            TENANT_ID INT NOT NULL,
+                            USERNAME VARCHAR(100) NOT NULL,
+                            EMAIL VARCHAR(150) NULL,
+                            DISPLAY_NAME VARCHAR(150) NOT NULL,
+                            PASSWORD_HASH VARCHAR(255) NULL,
+                            ROLE_CODE VARCHAR(50) NOT NULL,
+                            DEPARTMENT VARCHAR(100) NULL,
+                            AUTH_PROVIDER VARCHAR(50) NOT NULL DEFAULT 'LOCAL',
+                            EXTERNAL_SUBJECT_ID VARCHAR(128) NULL,
+                            IS_ACTIVE BIT NOT NULL DEFAULT 1,
+                            CREATED_DT DATETIME NOT NULL DEFAULT GETDATE(),
+                            UPDATED_DT DATETIME NOT NULL DEFAULT GETDATE(),
+                            LAST_LOGIN_DT DATETIME NULL,
+                            CONSTRAINT UQ_APP_USER_TENANT_USERNAME UNIQUE (TENANT_ID, USERNAME)
+                        );
+                    END
                     """);
 
             seedInitialDataIfEmpty();
@@ -364,6 +405,32 @@ public class HeliosService {
             );
             if (qCount != null && qCount == 0) {
                 insertQuote("Q-" + subId, subId, "$42,000", "Accepted", "2026-10-15");
+            }
+        }
+
+        Integer userCount = tenantJdbcTemplate.queryForObject("SELECT COUNT(*) FROM dbo.APP_USER", Integer.class);
+        if (userCount != null && userCount == 0) {
+            int currentTenant = TenantContext.getTenantId();
+            if (currentTenant == 2) {
+                tenantJdbcTemplate.update("""
+                        INSERT INTO dbo.APP_USER (TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH, ROLE_CODE, DEPARTMENT, AUTH_PROVIDER)
+                        VALUES 
+                        (2, 'ethorne', 'ethorne@legacy.ortaleza.com', 'Emily Thorne', '', 'UNDERWRITER', 'Global Risk Underwriting', 'LOCAL'),
+                        (2, 'vhayes', 'vhayes@legacy.ortaleza.com', 'Victor Hayes', '', 'EXECUTIVE', 'Executive Risk Management', 'LOCAL'),
+                        (2, 'mbrody', 'mbrody@legacy.ortaleza.com', 'Marcus Brody', '', 'CLAIMS_ADJUSTER', 'Claims Resolution', 'LOCAL'),
+                        (2, 'lchen', 'lchen@legacy.ortaleza.com', 'Linda Chen', '', 'AUDITOR', 'Regulatory Compliance', 'LOCAL'),
+                        (2, 'admin2', 'admin2@legacy.ortaleza.com', 'Legacy Tenant Admin', '', 'ADMIN', 'IT Operations', 'LOCAL')
+                        """);
+            } else {
+                tenantJdbcTemplate.update("""
+                        INSERT INTO dbo.APP_USER (TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH, ROLE_CODE, DEPARTMENT, AUTH_PROVIDER)
+                        VALUES 
+                        (1, 'mchang', 'mchang@ortaleza.com', 'Michael Chang', '', 'UNDERWRITER', 'Commercial Underwriting', 'LOCAL'),
+                        (1, 'sjones', 'sjones@ortaleza.com', 'Sarah Jones', '', 'EXECUTIVE', 'Executive Management', 'LOCAL'),
+                        (1, 'rpatel', 'rpatel@ortaleza.com', 'Raj Patel', '', 'CLAIMS_ADJUSTER', 'Claims Operations', 'LOCAL'),
+                        (1, 'dvance', 'dvance@ortaleza.com', 'David Vance', '', 'AUDITOR', 'Compliance & Audit', 'LOCAL'),
+                        (1, 'admin', 'admin@ortaleza.com', 'Helios Administrator', '', 'ADMIN', 'IT Systems & Administration', 'LOCAL')
+                        """);
             }
         }
     }
@@ -825,6 +892,207 @@ public class HeliosService {
             );
         } catch (Exception e) {
             return new DbPingResult(false, "UNKNOWN_TENANT_DB", null, null, null, e.getMessage());
+        }
+    }
+
+    public String resolveRoleName(String roleCode) {
+        if (roleCode == null) return "User";
+        return switch (roleCode.toUpperCase()) {
+            case "EXECUTIVE" -> "Portfolio Executive";
+            case "UNDERWRITER" -> "Senior Underwriter";
+            case "CLAIMS_ADJUSTER" -> "Claims Adjuster";
+            case "AUDITOR" -> "Compliance Auditor (Read-Only)";
+            case "ADMIN" -> "System Administrator";
+            default -> roleCode;
+        };
+    }
+
+    public List<AppUserDto> getAllUsers(int tenantId) {
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            String sql = """
+                    SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, ROLE_CODE,
+                           DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
+                           CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
+                           CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
+                    FROM dbo.APP_USER
+                    WHERE TENANT_ID = ?
+                    ORDER BY USER_ID ASC
+                    """;
+            return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new AppUserDto(
+                    rs.getInt("USER_ID"),
+                    rs.getInt("TENANT_ID"),
+                    rs.getString("USERNAME"),
+                    rs.getString("EMAIL"),
+                    rs.getString("DISPLAY_NAME"),
+                    rs.getString("ROLE_CODE"),
+                    resolveRoleName(rs.getString("ROLE_CODE")),
+                    rs.getString("DEPARTMENT"),
+                    rs.getString("AUTH_PROVIDER") != null ? rs.getString("AUTH_PROVIDER") : "LOCAL",
+                    rs.getString("EXTERNAL_SUBJECT_ID"),
+                    rs.getBoolean("IS_ACTIVE"),
+                    rs.getString("CREATED_DT"),
+                    rs.getString("LAST_LOGIN_DT")
+            ), tenantId);
+        } finally {
+            TenantContext.setTenantId(prevTenant);
+        }
+    }
+
+    public AppUserDto saveUser(AppUserDto user) {
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(user.tenantId());
+            ensureTenantSchema();
+            if (user.userId() > 0) {
+                tenantJdbcTemplate.update("""
+                        UPDATE dbo.APP_USER
+                        SET USERNAME = ?, EMAIL = ?, DISPLAY_NAME = ?, ROLE_CODE = ?,
+                            DEPARTMENT = ?, AUTH_PROVIDER = ?, EXTERNAL_SUBJECT_ID = ?,
+                            IS_ACTIVE = ?, UPDATED_DT = GETDATE()
+                        WHERE USER_ID = ? AND TENANT_ID = ?
+                        """,
+                        user.username(),
+                        user.email(),
+                        user.displayName(),
+                        user.roleCode(),
+                        user.department(),
+                        user.authProvider() != null ? user.authProvider() : "LOCAL",
+                        user.externalSubjectId(),
+                        user.active() ? 1 : 0,
+                        user.userId(),
+                        user.tenantId()
+                );
+                return user;
+            } else {
+                KeyHolder kh = new GeneratedKeyHolder();
+                tenantJdbcTemplate.update(con -> {
+                    PreparedStatement ps = con.prepareStatement("""
+                            INSERT INTO dbo.APP_USER (
+                                TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH,
+                                ROLE_CODE, DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE
+                            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)
+                            """, Statement.RETURN_GENERATED_KEYS);
+                    ps.setInt(1, user.tenantId());
+                    ps.setString(2, user.username());
+                    ps.setString(3, user.email());
+                    ps.setString(4, user.displayName());
+                    ps.setString(5, user.roleCode());
+                    ps.setString(6, user.department());
+                    ps.setString(7, user.authProvider() != null ? user.authProvider() : "LOCAL");
+                    ps.setString(8, user.externalSubjectId());
+                    ps.setBoolean(9, user.active());
+                    return ps;
+                }, kh);
+                Number key = kh.getKey();
+                int newId = key != null ? key.intValue() : 0;
+                return new AppUserDto(
+                        newId,
+                        user.tenantId(),
+                        user.username(),
+                        user.email(),
+                        user.displayName(),
+                        user.roleCode(),
+                        resolveRoleName(user.roleCode()),
+                        user.department(),
+                        user.authProvider() != null ? user.authProvider() : "LOCAL",
+                        user.externalSubjectId(),
+                        user.active(),
+                        LocalDate.now().toString(),
+                        null
+                );
+            }
+        } finally {
+            TenantContext.setTenantId(prevTenant);
+        }
+    }
+
+    public boolean deleteUser(int userId) {
+        return deleteUser(userId, TenantContext.getTenantId());
+    }
+
+    public boolean deleteUser(int userId, int tenantId) {
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            int rows = tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET IS_ACTIVE = 0 WHERE USER_ID = ?", userId);
+            return rows > 0;
+        } finally {
+            TenantContext.setTenantId(prevTenant);
+        }
+    }
+
+    public Map<String, Object> authenticate(int tenantId, String username, String password) {
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            String sql = """
+                    SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH, ROLE_CODE,
+                           DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
+                           CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
+                           CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
+                    FROM dbo.APP_USER
+                    WHERE TENANT_ID = ? AND LOWER(USERNAME) = LOWER(?) AND IS_ACTIVE = 1
+                    """;
+            List<Map<String, Object>> rows = tenantJdbcTemplate.query(sql, (rs, rowNum) -> {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("userId", rs.getInt("USER_ID"));
+                map.put("tenantId", rs.getInt("TENANT_ID"));
+                map.put("username", rs.getString("USERNAME"));
+                map.put("email", rs.getString("EMAIL"));
+                map.put("displayName", rs.getString("DISPLAY_NAME"));
+                map.put("passwordHash", rs.getString("PASSWORD_HASH"));
+                map.put("roleCode", rs.getString("ROLE_CODE"));
+                map.put("department", rs.getString("DEPARTMENT"));
+                map.put("authProvider", rs.getString("AUTH_PROVIDER"));
+                map.put("externalSubjectId", rs.getString("EXTERNAL_SUBJECT_ID"));
+                map.put("active", rs.getBoolean("IS_ACTIVE"));
+                map.put("createdDt", rs.getString("CREATED_DT"));
+                map.put("lastLoginDt", rs.getString("LAST_LOGIN_DT"));
+                return map;
+            }, tenantId, username);
+
+            if (rows.isEmpty()) {
+                return Map.of("success", false, "message", "Invalid username or account inactive for this tenant.");
+            }
+
+            Map<String, Object> userMap = rows.get(0);
+            String passHash = (String) userMap.get("passwordHash");
+            if (passHash != null && !passHash.isBlank() && password != null && !password.isBlank()) {
+                if (!passHash.equals(password)) {
+                    return Map.of("success", false, "message", "Invalid password.");
+                }
+            }
+
+            tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET LAST_LOGIN_DT = GETDATE() WHERE USER_ID = ?", userMap.get("userId"));
+
+            AppUserDto userDto = new AppUserDto(
+                    (int) userMap.get("userId"),
+                    (int) userMap.get("tenantId"),
+                    (String) userMap.get("username"),
+                    (String) userMap.get("email"),
+                    (String) userMap.get("displayName"),
+                    (String) userMap.get("roleCode"),
+                    resolveRoleName((String) userMap.get("roleCode")),
+                    (String) userMap.get("department"),
+                    (String) userMap.get("authProvider"),
+                    (String) userMap.get("externalSubjectId"),
+                    (boolean) userMap.get("active"),
+                    (String) userMap.get("createdDt"),
+                    LocalDate.now().toString()
+            );
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("user", userDto);
+            result.put("tenantId", tenantId);
+            return result;
+        } finally {
+            TenantContext.setTenantId(prevTenant);
         }
     }
 }

@@ -64,3 +64,4 @@ public class RatingRequest {
     public Map<String, Object> getRiskAnswers() { return riskAnswers; }
     public void setRiskAnswers(Map<String, Object> riskAnswers) { this.riskAnswers = riskAnswers; }
 }
+

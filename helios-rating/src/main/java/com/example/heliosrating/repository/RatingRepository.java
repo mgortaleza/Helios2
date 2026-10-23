@@ -239,3 +239,4 @@ public class RatingRepository {
         return upper;
     }
 }
+

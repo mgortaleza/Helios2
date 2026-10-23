@@ -92,3 +92,4 @@ public class RatingResult {
     public List<String> getCalculationTrace() { return calculationTrace; }
     public void setCalculationTrace(List<String> calculationTrace) { this.calculationTrace = calculationTrace; }
 }
+

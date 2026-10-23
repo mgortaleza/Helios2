@@ -50,6 +50,11 @@ public class HeliosRatingController {
 
     @GetMapping("/diagnostics")
     public ResponseEntity<Map<String, Object>> getDiagnostics() {
+        Runtime rt = Runtime.getRuntime();
+        long totalMem = rt.totalMemory();
+        long freeMem = rt.freeMemory();
+        long maxMem = rt.maxMemory();
+
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("service", "Helios Insurance Rules & Rating Engine");
         map.put("status", "UP");
@@ -58,6 +63,12 @@ public class HeliosRatingController {
         map.put("availableProductsCount", repository.getAllProducts().size());
         map.put("availablePlansCount", repository.getAllPlans().size());
         map.put("activeStateFilingsCount", repository.getAllVersions().size());
+        map.put("usedMemoryMb", (totalMem - freeMem) / (1024 * 1024));
+        map.put("totalMemoryMb", totalMem / (1024 * 1024));
+        map.put("maxMemoryMb", maxMem / (1024 * 1024));
+        map.put("availableProcessors", rt.availableProcessors());
+        map.put("activeThreads", Thread.activeCount());
         return ResponseEntity.ok(map);
     }
 }
+

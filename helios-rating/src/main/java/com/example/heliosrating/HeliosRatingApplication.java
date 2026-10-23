@@ -17,3 +17,4 @@ public class HeliosRatingApplication extends SpringBootServletInitializer {
         SpringApplication.run(HeliosRatingApplication.class, args);
     }
 }
+
