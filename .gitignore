@@ -22,4 +22,7 @@ src/main/resources/static/
 *.iml
 .DS_Store
 Thumbs.db
+chrome_temp_profile/
+temp_edge/
+
 

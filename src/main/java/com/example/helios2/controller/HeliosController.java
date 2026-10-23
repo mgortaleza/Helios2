@@ -226,4 +226,64 @@ public class HeliosController {
         result.put("tenantDatabase", heliosService.pingTenantDatabase());
         return result;
     }
+
+    public record LoginRequest(Integer tenantId, String username, String password) {}
+
+    @GetMapping("/auth/users")
+    public List<HeliosService.AppUserDto> getAuthUsers(@RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        return heliosService.getAllUsers(tenantId);
+    }
+
+    @PostMapping("/auth/login")
+    public ResponseEntity<?> login(@RequestBody LoginRequest req) {
+        int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId() : 1;
+        Map<String, Object> result = heliosService.authenticate(tenantId, req.username(), req.password());
+        if (Boolean.TRUE.equals(result.get("success"))) {
+            return ResponseEntity.ok(result);
+        } else {
+            return ResponseEntity.status(401).body(result);
+        }
+    }
+
+    @GetMapping("/users")
+    public List<HeliosService.AppUserDto> getUsers(@RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        return heliosService.getAllUsers(tenantId);
+    }
+
+    @PostMapping("/users")
+    public ResponseEntity<HeliosService.AppUserDto> createUser(@RequestBody HeliosService.AppUserDto user) {
+        HeliosService.AppUserDto saved = heliosService.saveUser(user);
+        return ResponseEntity.ok(saved);
+    }
+
+    @org.springframework.web.bind.annotation.PutMapping("/users/{userId}")
+    public ResponseEntity<HeliosService.AppUserDto> updateUser(
+            @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
+            @RequestBody HeliosService.AppUserDto user) {
+        HeliosService.AppUserDto toSave = new HeliosService.AppUserDto(
+                userId,
+                user.tenantId(),
+                user.username(),
+                user.email(),
+                user.displayName(),
+                user.roleCode(),
+                user.roleName(),
+                user.department(),
+                user.authProvider(),
+                user.externalSubjectId(),
+                user.active(),
+                user.createdDt(),
+                user.lastLoginDt()
+        );
+        HeliosService.AppUserDto saved = heliosService.saveUser(toSave);
+        return ResponseEntity.ok(saved);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/users/{userId}")
+    public ResponseEntity<Map<String, Object>> deleteUser(@org.springframework.web.bind.annotation.PathVariable("userId") int userId) {
+        boolean ok = heliosService.deleteUser(userId);
+        return ResponseEntity.ok(Map.of("success", ok, "userId", userId));
+    }
 }
