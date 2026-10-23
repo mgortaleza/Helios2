@@ -72,10 +72,18 @@ public class HeliosService {
             String scheduleMod,
             String serffTrackingNbr,
             String baseRate,
-            String calcTrace
+            String calcTrace,
+            Integer submsnId
     ) {
         public QuoteDto(String quoteId, String premium, String status, String generated) {
-            this(quoteId, premium, status, generated, null, null, null, null, null, null, null, null, null);
+            this(quoteId, premium, status, generated, null, null, null, null, null, null, null, null, null, null);
+        }
+        public QuoteDto(String quoteId, String premium, String status, String generated,
+                        String productCode, String stateCode, String exposureVal,
+                        String limitAmt, String retentionAmt, String scheduleMod,
+                        String serffTrackingNbr, String baseRate, String calcTrace) {
+            this(quoteId, premium, status, generated, productCode, stateCode, exposureVal,
+                 limitAmt, retentionAmt, scheduleMod, serffTrackingNbr, baseRate, calcTrace, null);
         }
     }
 
@@ -645,7 +653,8 @@ public class HeliosService {
                     rs.getString("SCHEDULE_MOD"),
                     rs.getString("SERFF_TRACKING_NBR"),
                     rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE")
+                    rs.getString("CALC_TRACE"),
+                    subId
             ));
         });
         return map;
@@ -675,7 +684,8 @@ public class HeliosService {
                     rs.getString("SCHEDULE_MOD"),
                     rs.getString("SERFF_TRACKING_NBR"),
                     rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE")
+                    rs.getString("CALC_TRACE"),
+                    rs.getInt("SUBMSN_ID")
             ));
         });
         return list;
@@ -706,7 +716,8 @@ public class HeliosService {
                     rs.getString("SCHEDULE_MOD"),
                     rs.getString("SERFF_TRACKING_NBR"),
                     rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE")
+                    rs.getString("CALC_TRACE"),
+                    rs.getInt("SUBMSN_ID")
             ));
         }, submsnId);
         return list;
@@ -776,7 +787,7 @@ public class HeliosService {
         return new QuoteDto(
                 quoteNbr, premium, finalStatus, today,
                 productCode, stateCode, exposureVal, limitAmt, retentionAmt,
-                scheduleMod, serffTrackingNbr, baseRate, calcTrace
+                scheduleMod, serffTrackingNbr, baseRate, calcTrace, submsnId
         );
     }
 

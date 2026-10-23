@@ -925,11 +925,50 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const loadSubmissions = useCallback(async () => {
     try {
       const data = await apiFetch('/api/submissions');
-      setSubmissions(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setSubmissions(list);
+      return list;
     } catch (err) {
       setFlash({ type: 'error', text: err.message });
+      return [];
     }
   }, [apiFetch]);
+
+  const refreshSubmission = useCallback(
+    async (subId) => {
+      if (!subId) return;
+      try {
+        const [subQuotes, allSubs] = await Promise.all([
+          apiFetch(`/api/quotes?submsnId=${subId}`),
+          apiFetch('/api/submissions')
+        ]);
+        const list = Array.isArray(allSubs) ? allSubs : [];
+        setSubmissions(list);
+        const quotesList = Array.isArray(subQuotes) ? subQuotes : [];
+        const matching = list.find((s) => s.submsnId === Number(subId));
+        if (matching) {
+          setSelectedSub({
+            ...matching,
+            status: 'Quoted',
+            quotes: quotesList
+          });
+        } else {
+          setSelectedSub((prev) =>
+            prev && prev.submsnId === Number(subId)
+              ? {
+                  ...prev,
+                  status: 'Quoted',
+                  quotes: quotesList
+                }
+              : prev
+          );
+        }
+      } catch (err) {
+        console.error('Failed to refresh submission:', err);
+      }
+    },
+    [apiFetch]
+  );
 
   const loadParties = useCallback(
     async (q = '') => {
@@ -1154,14 +1193,24 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                   Approved rates calculated with SERFF regulatory rules and stored in dbo.UW_QUOTE
                 </Typography>
               </Box>
-              <Button
-                variant="contained"
-                size="small"
-                startIcon={<Calculator size={16} />}
-                onClick={() => setRatingSubForQuote(selectedSub)}
-              >
-                Rate &amp; Issue New Quote
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<RefreshCw size={15} />}
+                  onClick={() => refreshSubmission(selectedSub.submsnId)}
+                >
+                  Refresh
+                </Button>
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<Calculator size={16} />}
+                  onClick={() => setRatingSubForQuote(selectedSub)}
+                >
+                  Rate &amp; Issue New Quote
+                </Button>
+              </Box>
             </Box>
             <TableContainer component={Paper} elevation={0} variant="outlined">
               <Table size="small">
@@ -1236,14 +1285,12 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
               type: 'success',
               text: `Quote ${savedQuote.quoteId} (${savedQuote.premium}) successfully saved to dbo.UW_QUOTE for ${ratingSubForQuote?.orgName}!`
             });
-            if (selectedSub && selectedSub.submsnId === savedQuote.submsnId) {
-              setSelectedSub((prev) => ({
-                ...prev,
-                status: 'Quoted',
-                quotes: [...(prev.quotes || []), savedQuote]
-              }));
+            const subId = ratingSubForQuote?.submsnId || selectedSub?.submsnId || savedQuote?.submsnId;
+            if (subId) {
+              await refreshSubmission(subId);
+            } else {
+              await loadSubmissions();
             }
-            await loadSubmissions();
           }}
         />
 
@@ -1610,14 +1657,12 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             type: 'success',
             text: `Quote ${savedQuote.quoteId} (${savedQuote.premium}) successfully saved to dbo.UW_QUOTE for ${ratingSubForQuote?.orgName}!`
           });
-          if (selectedSub && selectedSub.submsnId === savedQuote.submsnId) {
-            setSelectedSub((prev) => ({
-              ...prev,
-              status: 'Quoted',
-              quotes: [...(prev.quotes || []), savedQuote]
-            }));
+          const subId = ratingSubForQuote?.submsnId || selectedSub?.submsnId || savedQuote?.submsnId;
+          if (subId) {
+            await refreshSubmission(subId);
+          } else {
+            await loadSubmissions();
           }
-          await loadSubmissions();
         }}
       />
 
@@ -1817,7 +1862,7 @@ const RatingQuoteDialog = ({
       });
 
       if (onQuoteSaved) {
-        onQuoteSaved(saved);
+        await onQuoteSaved(saved);
       }
       onClose();
     } catch (err) {
