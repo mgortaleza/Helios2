@@ -1087,163 +1087,191 @@ public class HeliosService {
     }
 
     public List<AppUserDto> getAllUsers(int tenantId) {
-        ensureTenantSchema();
-        String sql = """
-                SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, ROLE_CODE,
-                       DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
-                       CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
-                       CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
-                FROM dbo.APP_USER
-                WHERE TENANT_ID = ?
-                ORDER BY USER_ID ASC
-                """;
-        return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new AppUserDto(
-                rs.getInt("USER_ID"),
-                rs.getInt("TENANT_ID"),
-                rs.getString("USERNAME"),
-                rs.getString("EMAIL"),
-                rs.getString("DISPLAY_NAME"),
-                rs.getString("ROLE_CODE"),
-                resolveRoleName(rs.getString("ROLE_CODE")),
-                rs.getString("DEPARTMENT"),
-                rs.getString("AUTH_PROVIDER") != null ? rs.getString("AUTH_PROVIDER") : "LOCAL",
-                rs.getString("EXTERNAL_SUBJECT_ID"),
-                rs.getBoolean("IS_ACTIVE"),
-                rs.getString("CREATED_DT"),
-                rs.getString("LAST_LOGIN_DT")
-        ), tenantId);
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            String sql = """
+                    SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, ROLE_CODE,
+                           DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
+                           CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
+                           CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
+                    FROM dbo.APP_USER
+                    WHERE TENANT_ID = ?
+                    ORDER BY USER_ID ASC
+                    """;
+            return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new AppUserDto(
+                    rs.getInt("USER_ID"),
+                    rs.getInt("TENANT_ID"),
+                    rs.getString("USERNAME"),
+                    rs.getString("EMAIL"),
+                    rs.getString("DISPLAY_NAME"),
+                    rs.getString("ROLE_CODE"),
+                    resolveRoleName(rs.getString("ROLE_CODE")),
+                    rs.getString("DEPARTMENT"),
+                    rs.getString("AUTH_PROVIDER") != null ? rs.getString("AUTH_PROVIDER") : "LOCAL",
+                    rs.getString("EXTERNAL_SUBJECT_ID"),
+                    rs.getBoolean("IS_ACTIVE"),
+                    rs.getString("CREATED_DT"),
+                    rs.getString("LAST_LOGIN_DT")
+            ), tenantId);
+        } finally {
+            TenantContext.setTenantId(prevTenant);
+        }
     }
 
     public AppUserDto saveUser(AppUserDto user) {
-        ensureTenantSchema();
-        if (user.userId() > 0) {
-            tenantJdbcTemplate.update("""
-                    UPDATE dbo.APP_USER
-                    SET USERNAME = ?, EMAIL = ?, DISPLAY_NAME = ?, ROLE_CODE = ?,
-                        DEPARTMENT = ?, AUTH_PROVIDER = ?, EXTERNAL_SUBJECT_ID = ?,
-                        IS_ACTIVE = ?, UPDATED_DT = GETDATE()
-                    WHERE USER_ID = ? AND TENANT_ID = ?
-                    """,
-                    user.username(),
-                    user.email(),
-                    user.displayName(),
-                    user.roleCode(),
-                    user.department(),
-                    user.authProvider() != null ? user.authProvider() : "LOCAL",
-                    user.externalSubjectId(),
-                    user.active() ? 1 : 0,
-                    user.userId(),
-                    user.tenantId()
-            );
-            return user;
-        } else {
-            KeyHolder kh = new GeneratedKeyHolder();
-            tenantJdbcTemplate.update(con -> {
-                PreparedStatement ps = con.prepareStatement("""
-                        INSERT INTO dbo.APP_USER (
-                            TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH,
-                            ROLE_CODE, DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE
-                        ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)
-                        """, Statement.RETURN_GENERATED_KEYS);
-                ps.setInt(1, user.tenantId());
-                ps.setString(2, user.username());
-                ps.setString(3, user.email());
-                ps.setString(4, user.displayName());
-                ps.setString(5, user.roleCode());
-                ps.setString(6, user.department());
-                ps.setString(7, user.authProvider() != null ? user.authProvider() : "LOCAL");
-                ps.setString(8, user.externalSubjectId());
-                ps.setBoolean(9, user.active());
-                return ps;
-            }, kh);
-            Number key = kh.getKey();
-            int newId = key != null ? key.intValue() : 0;
-            return new AppUserDto(
-                    newId,
-                    user.tenantId(),
-                    user.username(),
-                    user.email(),
-                    user.displayName(),
-                    user.roleCode(),
-                    resolveRoleName(user.roleCode()),
-                    user.department(),
-                    user.authProvider() != null ? user.authProvider() : "LOCAL",
-                    user.externalSubjectId(),
-                    user.active(),
-                    LocalDate.now().toString(),
-                    null
-            );
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(user.tenantId());
+            ensureTenantSchema();
+            if (user.userId() > 0) {
+                tenantJdbcTemplate.update("""
+                        UPDATE dbo.APP_USER
+                        SET USERNAME = ?, EMAIL = ?, DISPLAY_NAME = ?, ROLE_CODE = ?,
+                            DEPARTMENT = ?, AUTH_PROVIDER = ?, EXTERNAL_SUBJECT_ID = ?,
+                            IS_ACTIVE = ?, UPDATED_DT = GETDATE()
+                        WHERE USER_ID = ? AND TENANT_ID = ?
+                        """,
+                        user.username(),
+                        user.email(),
+                        user.displayName(),
+                        user.roleCode(),
+                        user.department(),
+                        user.authProvider() != null ? user.authProvider() : "LOCAL",
+                        user.externalSubjectId(),
+                        user.active() ? 1 : 0,
+                        user.userId(),
+                        user.tenantId()
+                );
+                return user;
+            } else {
+                KeyHolder kh = new GeneratedKeyHolder();
+                tenantJdbcTemplate.update(con -> {
+                    PreparedStatement ps = con.prepareStatement("""
+                            INSERT INTO dbo.APP_USER (
+                                TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH,
+                                ROLE_CODE, DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE
+                            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)
+                            """, Statement.RETURN_GENERATED_KEYS);
+                    ps.setInt(1, user.tenantId());
+                    ps.setString(2, user.username());
+                    ps.setString(3, user.email());
+                    ps.setString(4, user.displayName());
+                    ps.setString(5, user.roleCode());
+                    ps.setString(6, user.department());
+                    ps.setString(7, user.authProvider() != null ? user.authProvider() : "LOCAL");
+                    ps.setString(8, user.externalSubjectId());
+                    ps.setBoolean(9, user.active());
+                    return ps;
+                }, kh);
+                Number key = kh.getKey();
+                int newId = key != null ? key.intValue() : 0;
+                return new AppUserDto(
+                        newId,
+                        user.tenantId(),
+                        user.username(),
+                        user.email(),
+                        user.displayName(),
+                        user.roleCode(),
+                        resolveRoleName(user.roleCode()),
+                        user.department(),
+                        user.authProvider() != null ? user.authProvider() : "LOCAL",
+                        user.externalSubjectId(),
+                        user.active(),
+                        LocalDate.now().toString(),
+                        null
+                );
+            }
+        } finally {
+            TenantContext.setTenantId(prevTenant);
         }
     }
 
     public boolean deleteUser(int userId) {
-        ensureTenantSchema();
-        int rows = tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET IS_ACTIVE = 0 WHERE USER_ID = ?", userId);
-        return rows > 0;
+        return deleteUser(userId, TenantContext.getTenantId());
+    }
+
+    public boolean deleteUser(int userId, int tenantId) {
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            int rows = tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET IS_ACTIVE = 0 WHERE USER_ID = ?", userId);
+            return rows > 0;
+        } finally {
+            TenantContext.setTenantId(prevTenant);
+        }
     }
 
     public Map<String, Object> authenticate(int tenantId, String username, String password) {
-        ensureTenantSchema();
-        String sql = """
-                SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH, ROLE_CODE,
-                       DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
-                       CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
-                       CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
-                FROM dbo.APP_USER
-                WHERE TENANT_ID = ? AND LOWER(USERNAME) = LOWER(?) AND IS_ACTIVE = 1
-                """;
-        List<Map<String, Object>> rows = tenantJdbcTemplate.query(sql, (rs, rowNum) -> {
-            Map<String, Object> map = new LinkedHashMap<>();
-            map.put("userId", rs.getInt("USER_ID"));
-            map.put("tenantId", rs.getInt("TENANT_ID"));
-            map.put("username", rs.getString("USERNAME"));
-            map.put("email", rs.getString("EMAIL"));
-            map.put("displayName", rs.getString("DISPLAY_NAME"));
-            map.put("passwordHash", rs.getString("PASSWORD_HASH"));
-            map.put("roleCode", rs.getString("ROLE_CODE"));
-            map.put("department", rs.getString("DEPARTMENT"));
-            map.put("authProvider", rs.getString("AUTH_PROVIDER"));
-            map.put("externalSubjectId", rs.getString("EXTERNAL_SUBJECT_ID"));
-            map.put("active", rs.getBoolean("IS_ACTIVE"));
-            map.put("createdDt", rs.getString("CREATED_DT"));
-            map.put("lastLoginDt", rs.getString("LAST_LOGIN_DT"));
-            return map;
-        }, tenantId, username);
+        int prevTenant = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            ensureTenantSchema();
+            String sql = """
+                    SELECT USER_ID, TENANT_ID, USERNAME, EMAIL, DISPLAY_NAME, PASSWORD_HASH, ROLE_CODE,
+                           DEPARTMENT, AUTH_PROVIDER, EXTERNAL_SUBJECT_ID, IS_ACTIVE,
+                           CONVERT(VARCHAR(20), CREATED_DT, 120) AS CREATED_DT,
+                           CONVERT(VARCHAR(20), LAST_LOGIN_DT, 120) AS LAST_LOGIN_DT
+                    FROM dbo.APP_USER
+                    WHERE TENANT_ID = ? AND LOWER(USERNAME) = LOWER(?) AND IS_ACTIVE = 1
+                    """;
+            List<Map<String, Object>> rows = tenantJdbcTemplate.query(sql, (rs, rowNum) -> {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("userId", rs.getInt("USER_ID"));
+                map.put("tenantId", rs.getInt("TENANT_ID"));
+                map.put("username", rs.getString("USERNAME"));
+                map.put("email", rs.getString("EMAIL"));
+                map.put("displayName", rs.getString("DISPLAY_NAME"));
+                map.put("passwordHash", rs.getString("PASSWORD_HASH"));
+                map.put("roleCode", rs.getString("ROLE_CODE"));
+                map.put("department", rs.getString("DEPARTMENT"));
+                map.put("authProvider", rs.getString("AUTH_PROVIDER"));
+                map.put("externalSubjectId", rs.getString("EXTERNAL_SUBJECT_ID"));
+                map.put("active", rs.getBoolean("IS_ACTIVE"));
+                map.put("createdDt", rs.getString("CREATED_DT"));
+                map.put("lastLoginDt", rs.getString("LAST_LOGIN_DT"));
+                return map;
+            }, tenantId, username);
 
-        if (rows.isEmpty()) {
-            return Map.of("success", false, "message", "Invalid username or account inactive for this tenant.");
-        }
-
-        Map<String, Object> userMap = rows.get(0);
-        String passHash = (String) userMap.get("passwordHash");
-        if (passHash != null && !passHash.isBlank() && password != null && !password.isBlank()) {
-            if (!passHash.equals(password)) {
-                return Map.of("success", false, "message", "Invalid password.");
+            if (rows.isEmpty()) {
+                return Map.of("success", false, "message", "Invalid username or account inactive for this tenant.");
             }
+
+            Map<String, Object> userMap = rows.get(0);
+            String passHash = (String) userMap.get("passwordHash");
+            if (passHash != null && !passHash.isBlank() && password != null && !password.isBlank()) {
+                if (!passHash.equals(password)) {
+                    return Map.of("success", false, "message", "Invalid password.");
+                }
+            }
+
+            tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET LAST_LOGIN_DT = GETDATE() WHERE USER_ID = ?", userMap.get("userId"));
+
+            AppUserDto userDto = new AppUserDto(
+                    (int) userMap.get("userId"),
+                    (int) userMap.get("tenantId"),
+                    (String) userMap.get("username"),
+                    (String) userMap.get("email"),
+                    (String) userMap.get("displayName"),
+                    (String) userMap.get("roleCode"),
+                    resolveRoleName((String) userMap.get("roleCode")),
+                    (String) userMap.get("department"),
+                    (String) userMap.get("authProvider"),
+                    (String) userMap.get("externalSubjectId"),
+                    (boolean) userMap.get("active"),
+                    (String) userMap.get("createdDt"),
+                    LocalDate.now().toString()
+            );
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("user", userDto);
+            result.put("tenantId", tenantId);
+            return result;
+        } finally {
+            TenantContext.setTenantId(prevTenant);
         }
-
-        tenantJdbcTemplate.update("UPDATE dbo.APP_USER SET LAST_LOGIN_DT = GETDATE() WHERE USER_ID = ?", userMap.get("userId"));
-
-        AppUserDto userDto = new AppUserDto(
-                (int) userMap.get("userId"),
-                (int) userMap.get("tenantId"),
-                (String) userMap.get("username"),
-                (String) userMap.get("email"),
-                (String) userMap.get("displayName"),
-                (String) userMap.get("roleCode"),
-                resolveRoleName((String) userMap.get("roleCode")),
-                (String) userMap.get("department"),
-                (String) userMap.get("authProvider"),
-                (String) userMap.get("externalSubjectId"),
-                (boolean) userMap.get("active"),
-                (String) userMap.get("createdDt"),
-                LocalDate.now().toString()
-        );
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("success", true);
-        result.put("user", userDto);
-        result.put("tenantId", tenantId);
-        return result;
     }
 }

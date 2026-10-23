@@ -230,14 +230,21 @@ public class HeliosController {
     public record LoginRequest(Integer tenantId, String username, String password) {}
 
     @GetMapping("/auth/users")
-    public List<HeliosService.AppUserDto> getAuthUsers(@RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+    public List<HeliosService.AppUserDto> getAuthUsers(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
         int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
         return heliosService.getAllUsers(tenantId);
     }
 
     @PostMapping("/auth/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest req) {
-        int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId() : 1;
+    public ResponseEntity<?> login(
+            @RequestParam(name = "tenantId", required = false) Integer queryTenantId,
+            @RequestBody LoginRequest req) {
+        int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId()
+                : (queryTenantId != null && queryTenantId > 0) ? queryTenantId
+                : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
         Map<String, Object> result = heliosService.authenticate(tenantId, req.username(), req.password());
         if (Boolean.TRUE.equals(result.get("success"))) {
             return ResponseEntity.ok(result);
@@ -247,13 +254,16 @@ public class HeliosController {
     }
 
     @GetMapping("/users")
-    public List<HeliosService.AppUserDto> getUsers(@RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+    public List<HeliosService.AppUserDto> getUsers(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
         int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
         return heliosService.getAllUsers(tenantId);
     }
 
     @PostMapping("/users")
     public ResponseEntity<HeliosService.AppUserDto> createUser(@RequestBody HeliosService.AppUserDto user) {
+        TenantContext.setTenantId(user.tenantId());
         HeliosService.AppUserDto saved = heliosService.saveUser(user);
         return ResponseEntity.ok(saved);
     }
@@ -262,6 +272,7 @@ public class HeliosController {
     public ResponseEntity<HeliosService.AppUserDto> updateUser(
             @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
             @RequestBody HeliosService.AppUserDto user) {
+        TenantContext.setTenantId(user.tenantId());
         HeliosService.AppUserDto toSave = new HeliosService.AppUserDto(
                 userId,
                 user.tenantId(),
@@ -282,8 +293,11 @@ public class HeliosController {
     }
 
     @org.springframework.web.bind.annotation.DeleteMapping("/users/{userId}")
-    public ResponseEntity<Map<String, Object>> deleteUser(@org.springframework.web.bind.annotation.PathVariable("userId") int userId) {
-        boolean ok = heliosService.deleteUser(userId);
+    public ResponseEntity<Map<String, Object>> deleteUser(
+            @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        boolean ok = heliosService.deleteUser(userId, tenantId);
         return ResponseEntity.ok(Map.of("success", ok, "userId", userId));
     }
 }

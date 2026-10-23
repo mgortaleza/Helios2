@@ -3288,7 +3288,11 @@ const LoginView = ({ onLoginSuccess, tenants = [] }) => {
     let isCurrent = true;
     const fetchUsers = async () => {
       try {
-        const res = await fetch(`/api/auth/users?tenantId=${selectedTenantId}`);
+        const res = await fetch(`/api/auth/users?tenantId=${selectedTenantId}`, {
+          headers: {
+            'X-Tenant-ID': String(selectedTenantId)
+          }
+        });
         if (res.ok) {
           const list = await res.json();
           if (isCurrent && Array.isArray(list)) {
@@ -3319,9 +3323,12 @@ const LoginView = ({ onLoginSuccess, tenants = [] }) => {
     setError(null);
     const userToSubmit = overrideUser || username;
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(`/api/auth/login?tenantId=${selectedTenantId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-ID': String(selectedTenantId)
+        },
         body: JSON.stringify({
           tenantId: Number(selectedTenantId),
           username: userToSubmit,
@@ -3717,12 +3724,13 @@ export default function App() {
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
 
   const handleLoginSuccess = (user, tenantId) => {
-    setCurrentUser(user);
-    setActiveTenantId(tenantId);
+    const userWithTenant = { ...user, tenantId: Number(tenantId) };
+    setCurrentUser(userWithTenant);
+    setActiveTenantId(Number(tenantId));
     if (user.roleCode) {
       setActiveRoleCode(user.roleCode);
     }
-    localStorage.setItem('helios_auth_user', JSON.stringify(user));
+    localStorage.setItem('helios_auth_user', JSON.stringify(userWithTenant));
   };
 
   const handleLogout = () => {
