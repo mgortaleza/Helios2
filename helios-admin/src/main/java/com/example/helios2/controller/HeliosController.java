@@ -169,16 +169,104 @@ public class HeliosController {
     public Map<String, Object> getDiagnostics() {
         int activeTenantId = TenantContext.getTenantId();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("application", "Helios2 Spring Boot Multi-Tenant Service");
+        result.put("service", "HeliosAdmin Control Plane & RBAC Manager");
+        result.put("status", "UP");
+        result.put("version", "1.0.0-SNAPSHOT");
+        result.put("application", "HeliosAdmin Platform Control Plane");
         result.put("osAndArch", System.getProperty("os.name") + " (" + System.getProperty("os.arch") + ")");
         result.put("javaRuntime", System.getProperty("java.runtime.version"));
         result.put("processUser", System.getProperty("user.name"));
         result.put("authMode", SqlServerDataSourceFactory.isWindows() ? "Windows Integrated Auth (Native DLL)" : "JavaKerberos (JAAS)");
         result.put("serverTime", LocalDateTime.now().toString());
+
+        Runtime rt = Runtime.getRuntime();
+        long totalMem = rt.totalMemory();
+        long freeMem = rt.freeMemory();
+        long maxMem = rt.maxMemory();
+        result.put("usedMemoryMb", (totalMem - freeMem) / (1024 * 1024));
+        result.put("totalMemoryMb", totalMem / (1024 * 1024));
+        result.put("maxMemoryMb", maxMem / (1024 * 1024));
+        result.put("availableProcessors", rt.availableProcessors());
+        result.put("activeThreads", Thread.activeCount());
+
         result.put("activeTenantId", activeTenantId);
         result.put("activeTenantConfig", tenantRegistryService.getTenantById(activeTenantId).orElse(null));
         result.put("masterDatabase", tenantRegistryService.pingMasterDatabase());
         result.put("tenantDatabase", heliosService.pingTenantDatabase());
         return result;
+    }
+
+    public record LoginRequest(Integer tenantId, String username, String password) {}
+
+    @GetMapping("/auth/users")
+    public List<HeliosService.AppUserDto> getAuthUsers(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
+        return heliosService.getAllUsers(tenantId);
+    }
+
+    @PostMapping("/auth/login")
+    public ResponseEntity<?> login(
+            @RequestParam(name = "tenantId", required = false) Integer queryTenantId,
+            @RequestBody LoginRequest req) {
+        int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId()
+                : (queryTenantId != null && queryTenantId > 0) ? queryTenantId
+                : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
+        Map<String, Object> result = heliosService.authenticate(tenantId, req.username(), req.password());
+        if (Boolean.TRUE.equals(result.get("success"))) {
+            return ResponseEntity.ok(result);
+        } else {
+            return ResponseEntity.status(401).body(result);
+        }
+    }
+
+    @GetMapping("/users")
+    public List<HeliosService.AppUserDto> getUsers(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        TenantContext.setTenantId(tenantId);
+        return heliosService.getAllUsers(tenantId);
+    }
+
+    @PostMapping("/users")
+    public ResponseEntity<HeliosService.AppUserDto> createUser(@RequestBody HeliosService.AppUserDto user) {
+        TenantContext.setTenantId(user.tenantId());
+        HeliosService.AppUserDto saved = heliosService.saveUser(user);
+        return ResponseEntity.ok(saved);
+    }
+
+    @org.springframework.web.bind.annotation.PutMapping("/users/{userId}")
+    public ResponseEntity<HeliosService.AppUserDto> updateUser(
+            @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
+            @RequestBody HeliosService.AppUserDto user) {
+        TenantContext.setTenantId(user.tenantId());
+        HeliosService.AppUserDto toSave = new HeliosService.AppUserDto(
+                userId,
+                user.tenantId(),
+                user.username(),
+                user.email(),
+                user.displayName(),
+                user.roleCode(),
+                user.roleName(),
+                user.department(),
+                user.authProvider(),
+                user.externalSubjectId(),
+                user.active(),
+                user.createdDt(),
+                user.lastLoginDt()
+        );
+        HeliosService.AppUserDto saved = heliosService.saveUser(toSave);
+        return ResponseEntity.ok(saved);
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/users/{userId}")
+    public ResponseEntity<Map<String, Object>> deleteUser(
+            @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+        boolean ok = heliosService.deleteUser(userId, tenantId);
+        return ResponseEntity.ok(Map.of("success", ok, "userId", userId));
     }
 }

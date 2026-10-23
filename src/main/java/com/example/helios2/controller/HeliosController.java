@@ -214,12 +214,26 @@ public class HeliosController {
     public Map<String, Object> getDiagnostics() {
         int activeTenantId = TenantContext.getTenantId();
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("service", "Helios2 Core Policy & Claims Suite");
+        result.put("status", "UP");
+        result.put("version", "0.1.0-SNAPSHOT");
         result.put("application", "Helios2 Spring Boot Multi-Tenant Service");
         result.put("osAndArch", System.getProperty("os.name") + " (" + System.getProperty("os.arch") + ")");
         result.put("javaRuntime", System.getProperty("java.runtime.version"));
         result.put("processUser", System.getProperty("user.name"));
         result.put("authMode", SqlServerDataSourceFactory.isWindows() ? "Windows Integrated Auth (Native DLL)" : "JavaKerberos (JAAS)");
         result.put("serverTime", LocalDateTime.now().toString());
+
+        Runtime rt = Runtime.getRuntime();
+        long totalMem = rt.totalMemory();
+        long freeMem = rt.freeMemory();
+        long maxMem = rt.maxMemory();
+        result.put("usedMemoryMb", (totalMem - freeMem) / (1024 * 1024));
+        result.put("totalMemoryMb", totalMem / (1024 * 1024));
+        result.put("maxMemoryMb", maxMem / (1024 * 1024));
+        result.put("availableProcessors", rt.availableProcessors());
+        result.put("activeThreads", Thread.activeCount());
+
         result.put("activeTenantId", activeTenantId);
         result.put("activeTenantConfig", tenantRegistryService.getTenantById(activeTenantId).orElse(null));
         result.put("masterDatabase", tenantRegistryService.pingMasterDatabase());

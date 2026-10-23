@@ -51,3 +51,4 @@ echo   - Deploy WAR to : %DOC_TOMCAT%\webapps\helios-document.war
 echo   - Next Step     : Run install-document-service.bat as Administrator
 echo ============================================================================
 endlocal
+

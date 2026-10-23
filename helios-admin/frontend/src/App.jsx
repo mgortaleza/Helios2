@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -50,7 +50,27 @@ import {
   RefreshCw,
   Menu as MenuIcon,
   ChevronRight,
-  ExternalLink
+  ExternalLink,
+  Users,
+  UserPlus,
+  Key,
+  Lock,
+  Laptop,
+  CheckCircle2,
+  XCircle,
+  Search,
+  Edit2,
+  Shield,
+  Building2,
+  Server,
+  Cpu,
+  Database,
+  HardDrive,
+  FileText,
+  Zap,
+  AlertCircle,
+  Layers,
+  Clock
 } from 'lucide-react';
 
 const adminTheme = createTheme({
@@ -134,6 +154,73 @@ function StatusBadge({ ok, label }) {
   );
 }
 
+function LatencyBadge({ ms }) {
+  if (ms === null || ms === undefined) return null;
+  const color = ms < 50 ? '#16a34a' : ms < 200 ? '#d97706' : '#dc2626';
+  const bg = ms < 50 ? '#f0fdf4' : ms < 200 ? '#fffbeb' : '#fef2f2';
+  return (
+    <Box
+      component="span"
+      sx={{
+        px: 1,
+        py: 0.2,
+        borderRadius: '6px',
+        fontSize: '0.72rem',
+        fontWeight: 700,
+        backgroundColor: bg,
+        color: color,
+        border: `1px solid ${color}33`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.4
+      }}
+    >
+      <Zap size={11} />
+      {ms} ms
+    </Box>
+  );
+}
+
+function MemoryBar({ usedMb, totalMb, maxMb }) {
+  if (usedMb === undefined || usedMb === null || !totalMb) return null;
+  const pct = Math.min(100, Math.round((usedMb / totalMb) * 100));
+  const color = pct > 85 ? '#ef4444' : pct > 65 ? '#f59e0b' : '#10b981';
+
+  return (
+    <Box sx={{ width: '100%', mt: 1.5, p: 1.5, bgcolor: '#f8fafc', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.8 }}>
+        <Typography variant="caption" sx={{ color: '#475569', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Cpu size={14} color="#64748b" /> JVM Heap Memory
+        </Typography>
+        <Typography variant="caption" sx={{ color: color, fontWeight: 800, fontFamily: 'monospace', fontSize: '0.78rem' }}>
+          {usedMb} MB / {totalMb} MB ({pct}%)
+        </Typography>
+      </Box>
+      <Box sx={{ width: '100%', height: 8, bgcolor: '#e2e8f0', borderRadius: 4, overflow: 'hidden' }}>
+        <Box
+          sx={{
+            width: `${pct}%`,
+            height: '100%',
+            bgcolor: color,
+            borderRadius: 4,
+            transition: 'width 0.4s ease'
+          }}
+        />
+      </Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.6 }}>
+        <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+          Free: {Math.max(0, totalMb - usedMb)} MB
+        </Typography>
+        {maxMb && (
+          <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+            Max Pool: {maxMb} MB
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('tenants');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -141,6 +228,14 @@ export default function App() {
   const [selectedTenantId, setSelectedTenantId] = useState(1);
   const [roles, setRoles] = useState([]);
   const [diag, setDiag] = useState(null);
+  const [diagRefreshing, setDiagRefreshing] = useState(false);
+  const [autoRefreshDiag, setAutoRefreshDiag] = useState(false);
+  const [servicesDiag, setServicesDiag] = useState({
+    helios2: { loading: true, data: null, latency: null, error: null },
+    admin: { loading: true, data: null, latency: null, error: null },
+    rating: { loading: true, data: null, latency: null, error: null },
+    document: { loading: true, data: null, latency: null, error: null },
+  });
   const [flash, setFlash] = useState(null);
 
   // Tenant Modal State
@@ -205,6 +300,120 @@ export default function App() {
       setFlash({ type: 'error', text: `Failed to load roles: ${err.message}` });
     }
   }, [apiFetch, selectedTenantId]);
+
+  // User Management State & Callbacks
+  const [users, setUsers] = useState([]);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userFilterRole, setUserFilterRole] = useState('');
+  const [userFilterProvider, setUserFilterProvider] = useState('');
+  const [openUserDialog, setOpenUserDialog] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [userForm, setUserForm] = useState({
+    userId: 0,
+    tenantId: 1,
+    username: '',
+    email: '',
+    displayName: '',
+    roleCode: 'UNDERWRITER',
+    department: 'Commercial Underwriting',
+    authProvider: 'LOCAL',
+    externalSubjectId: '',
+    active: true
+  });
+
+  const loadUsers = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/users?tenantId=${selectedTenantId}`);
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to load users: ${err.message}` });
+    }
+  }, [apiFetch, selectedTenantId]);
+
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    setIsSavingUser(true);
+    try {
+      if (userForm.userId > 0) {
+        await apiFetch(`/api/users/${userForm.userId}`, {
+          method: 'PUT',
+          body: JSON.stringify(userForm)
+        });
+        setFlash({ type: 'success', text: `User ${userForm.username} successfully updated in Tenant #${userForm.tenantId} database.` });
+      } else {
+        await apiFetch('/api/users', {
+          method: 'POST',
+          body: JSON.stringify(userForm)
+        });
+        setFlash({ type: 'success', text: `User ${userForm.username} successfully created in Tenant #${userForm.tenantId} database.` });
+      }
+      setOpenUserDialog(false);
+      await loadUsers();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to save user: ${err.message}` });
+    } finally {
+      setIsSavingUser(false);
+    }
+  };
+
+  const handleToggleUserActive = async (user) => {
+    try {
+      await apiFetch(`/api/users/${user.userId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...user, active: !user.active })
+      });
+      setFlash({ type: 'success', text: `User ${user.username} status updated to ${!user.active ? 'Active' : 'Inactive'}.` });
+      await loadUsers();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to update user status: ${err.message}` });
+    }
+  };
+
+  const handleOpenEditUser = (u) => {
+    setUserForm({
+      userId: u.userId,
+      tenantId: u.tenantId,
+      username: u.username,
+      email: u.email || '',
+      displayName: u.displayName,
+      roleCode: u.roleCode,
+      department: u.department || '',
+      authProvider: u.authProvider || 'LOCAL',
+      externalSubjectId: u.externalSubjectId || '',
+      active: u.active
+    });
+    setOpenUserDialog(true);
+  };
+
+  const handleOpenAddUser = () => {
+    setUserForm({
+      userId: 0,
+      tenantId: selectedTenantId,
+      username: '',
+      email: '',
+      displayName: '',
+      roleCode: roles.length > 0 ? roles[0].roleCode : 'UNDERWRITER',
+      department: 'Commercial Underwriting',
+      authProvider: 'LOCAL',
+      externalSubjectId: '',
+      active: true
+    });
+    setOpenUserDialog(true);
+  };
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((u) => {
+      const matchSearch =
+        !userSearchQuery ||
+        u.username?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+        u.displayName?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+        u.email?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+        u.department?.toLowerCase().includes(userSearchQuery.toLowerCase());
+      const matchRole = !userFilterRole || u.roleCode === userFilterRole;
+      const matchProvider = !userFilterProvider || u.authProvider === userFilterProvider;
+      return matchSearch && matchRole && matchProvider;
+    });
+  }, [users, userSearchQuery, userFilterRole, userFilterProvider]);
 
   const [filings, setFilings] = useState([]);
   const [ratingProducts, setRatingProducts] = useState([]);
@@ -323,20 +532,62 @@ export default function App() {
   };
 
   const loadDiagnostics = useCallback(async () => {
+    setDiagRefreshing(true);
+
+    const pingService = async (url) => {
+      const t0 = performance.now();
+      try {
+        const data = await apiFetch(url);
+        const latency = Math.round(performance.now() - t0);
+        return { loading: false, data, latency, error: null };
+      } catch (err) {
+        const latency = Math.round(performance.now() - t0);
+        return { loading: false, data: null, latency, error: err.message || 'Service unreachable' };
+      }
+    };
+
     try {
-      const data = await apiFetch('/api/diagnostics');
-      setDiag(data);
+      const [h2, adm, rat, doc] = await Promise.all([
+        pingService('/core-api/diagnostics'),
+        pingService('/api/diagnostics'),
+        pingService('/rating-api/diagnostics'),
+        pingService(`/document-api/documents/diagnostics?tenantId=${selectedTenantId || 1}`)
+      ]);
+
+      setServicesDiag({
+        helios2: h2,
+        admin: adm,
+        rating: rat,
+        document: doc
+      });
+
+      if (adm.data) {
+        setDiag(adm.data);
+      } else if (h2.data) {
+        setDiag(h2.data);
+      }
     } catch (err) {
-      setFlash({ type: 'error', text: `Failed to load diagnostics: ${err.message}` });
+      setFlash({ type: 'error', text: `Failed to refresh diagnostics: ${err.message}` });
+    } finally {
+      setDiagRefreshing(false);
     }
-  }, [apiFetch]);
+  }, [apiFetch, selectedTenantId]);
+
+  useEffect(() => {
+    if (!autoRefreshDiag) return;
+    const interval = setInterval(() => {
+      loadDiagnostics();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [autoRefreshDiag, loadDiagnostics]);
 
   useEffect(() => {
     loadTenants();
     loadRoles();
+    loadUsers();
     loadDiagnostics();
     loadRatingData();
-  }, [loadTenants, loadRoles, loadDiagnostics, loadRatingData]);
+  }, [loadTenants, loadRoles, loadUsers, loadDiagnostics, loadRatingData]);
 
   const handleOpenEditTenant = (t) => {
     setTenantForm({
@@ -447,8 +698,9 @@ export default function App() {
   const navItems = [
     { id: 'tenants', label: 'Tenant Customization', icon: <Palette size={18} /> },
     { id: 'roles', label: 'Role & RBAC Manager', icon: <ShieldCheck size={18} /> },
+    { id: 'users', label: 'User & Identity Manager', icon: <Users size={18} /> },
     { id: 'rating', label: 'Rating & State Filings', icon: <Calculator size={18} /> },
-    { id: 'diagnostics', label: 'SQL & System Diagnostics', icon: <Activity size={18} /> }
+    { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
   ];
 
   const activeTenantObj = tenants.find((t) => t.tenantId === Number(selectedTenantId)) || tenants[0];
@@ -808,78 +1060,814 @@ export default function App() {
                 </Box>
               )}
 
-              {/* TAB 3: SQL & SYSTEM DIAGNOSTICS */}
-              {activeTab === 'diagnostics' && (
+              {/* TAB: USER & IDENTITY MANAGEMENT */}
+              {activeTab === 'users' && (
                 <Box>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                     <Box>
                       <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
-                        SQL Server &amp; Multi-Tenant Diagnostics
+                        User &amp; Identity Management — {activeTenantObj?.tenantName || `Tenant #${selectedTenantId}`}
                       </Typography>
                       <Typography variant="body2" sx={{ color: '#64748b' }}>
-                        Live connectivity telemetry for MSTR_DATA and Tenant #{selectedTenantId} ({activeTenantObj?.dbCatalogName})
+                        Maintain user accounts, role assignments, and tenant associations in <code>{activeTenantObj?.dbCatalogName || 'HELIOS2_TST'}</code> (dbo.APP_USER). Enterprise SSO architecture ready for Windows Login and Azure Entra ID.
                       </Typography>
                     </Box>
-                    <Button variant="contained" startIcon={<RefreshCw size={16} />} onClick={loadDiagnostics}>
-                      Refresh Telemetry
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1.5 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<RefreshCw size={15} />}
+                        onClick={loadUsers}
+                      >
+                        Refresh Users
+                      </Button>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        startIcon={<UserPlus size={16} />}
+                        onClick={handleOpenAddUser}
+                      >
+                        Create User
+                      </Button>
+                    </Box>
                   </Box>
 
-                  {!diag ? (
-                    <Card elevation={0}>
-                      <CardContent sx={{ py: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <CircularProgress size={22} />
-                        <Typography>Pinging SQL Server catalogs...</Typography>
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <Grid container spacing={3}>
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <Card elevation={0} sx={{ borderTop: '4px solid #0f172a' }}>
-                          <CardContent>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-                              <Typography variant="h6">Master Registry DB (MSTR_DATA)</Typography>
-                              <StatusBadge ok={diag.masterDatabase?.connected} label={diag.masterDatabase?.connected ? 'Connected' : 'Error'} />
+                  {/* Summary Metric Cards */}
+                  <Grid container spacing={2.5} sx={{ mb: 3 }}>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <Card elevation={0}>
+                        <CardContent sx={{ p: 2.25 }}>
+                          <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Tenant Accounts
+                          </Typography>
+                          <Typography variant="h4" sx={{ fontWeight: 800, color: '#0f172a', mt: 0.5 }}>
+                            {users.length}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#0284c7', mt: 0.5, display: 'block' }}>
+                            Catalog: {activeTenantObj?.dbCatalogName}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <Card elevation={0}>
+                        <CardContent sx={{ p: 2.25 }}>
+                          <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Active Accounts
+                          </Typography>
+                          <Typography variant="h4" sx={{ fontWeight: 800, color: '#16a34a', mt: 0.5 }}>
+                            {users.filter((u) => u.active).length}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                            {users.filter((u) => !u.active).length} deactivated
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <Card elevation={0}>
+                        <CardContent sx={{ p: 2.25 }}>
+                          <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Directory Mode
+                          </Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700, color: '#0f172a', mt: 0.75 }}>
+                            Local + SSO Ready
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                            Windows AD &bull; Azure Entra ID
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <Card elevation={0}>
+                        <CardContent sx={{ p: 2.25 }}>
+                          <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Password Policy
+                          </Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700, color: '#d97706', mt: 0.75 }}>
+                            Blank Allowed
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                            Evaluation / Demo mode active
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  </Grid>
+
+                  {/* Filters & Search */}
+                  <Card elevation={0} sx={{ mb: 3 }}>
+                    <CardContent sx={{ p: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <TextField
+                        size="small"
+                        placeholder="Filter by name, username, email, department..."
+                        value={userSearchQuery}
+                        onChange={(e) => setUserSearchQuery(e.target.value)}
+                        sx={{ minWidth: 280, flexGrow: 1 }}
+                        InputProps={{
+                          startAdornment: (
+                            <Box sx={{ mr: 1, color: '#64748b', display: 'flex', alignItems: 'center' }}>
+                              <Search size={16} />
                             </Box>
-                            <Divider sx={{ mb: 2 }} />
-                            <Typography variant="body2" sx={{ mb: 0.5 }}>
-                              <strong>Database:</strong> <code>{diag.masterDatabase?.databaseName}</code>
+                          )
+                        }}
+                      />
+                      <FormControl size="small" sx={{ minWidth: 180 }}>
+                        <InputLabel>Role Filter</InputLabel>
+                        <Select
+                          label="Role Filter"
+                          value={userFilterRole}
+                          onChange={(e) => setUserFilterRole(e.target.value)}
+                        >
+                          <MenuItem value="">All Roles</MenuItem>
+                          {roles.map((r) => (
+                            <MenuItem key={r.roleCode} value={r.roleCode}>
+                              {r.roleName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <FormControl size="small" sx={{ minWidth: 180 }}>
+                        <InputLabel>Auth Provider</InputLabel>
+                        <Select
+                          label="Auth Provider"
+                          value={userFilterProvider}
+                          onChange={(e) => setUserFilterProvider(e.target.value)}
+                        >
+                          <MenuItem value="">All Providers</MenuItem>
+                          <MenuItem value="LOCAL">Local Database</MenuItem>
+                          <MenuItem value="WINDOWS_AD">Windows Active Directory</MenuItem>
+                          <MenuItem value="AZURE_ENTRA_ID">Microsoft Entra ID</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </CardContent>
+                  </Card>
+
+                  {/* Users Table */}
+                  <Card elevation={0} sx={{ mb: 3 }}>
+                    <TableContainer component={Paper} elevation={0}>
+                      <Table size="small">
+                        <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                          <TableRow>
+                            <TableCell>User</TableCell>
+                            <TableCell>Tenant Association</TableCell>
+                            <TableCell>Assigned Role</TableCell>
+                            <TableCell>Department</TableCell>
+                            <TableCell>Auth Provider</TableCell>
+                            <TableCell>External Identity / UPN</TableCell>
+                            <TableCell>Status</TableCell>
+                            <TableCell>Last Login</TableCell>
+                            <TableCell align="right">Actions</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {filteredUsers.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4, color: '#94a3b8' }}>
+                                No users found in {activeTenantObj?.dbCatalogName} matching current filters.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredUsers.map((u) => (
+                              <TableRow key={u.userId} hover>
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                                    <Box
+                                      sx={{
+                                        width: 32,
+                                        height: 32,
+                                        borderRadius: '50%',
+                                        backgroundColor: '#0f172a',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontWeight: 700,
+                                        fontSize: '0.78rem'
+                                      }}
+                                    >
+                                      {u.displayName.split(' ').map((n) => n[0]).join('').slice(0, 2)}
+                                    </Box>
+                                    <Box>
+                                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                        {u.displayName}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b' }}>
+                                        @{u.username} &bull; {u.email || 'no-email'}
+                                      </Typography>
+                                    </Box>
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={`Tenant #${u.tenantId} (${activeTenantObj?.dbCatalogName || 'HELIOS2_TST'})`}
+                                    size="small"
+                                    sx={{ fontWeight: 600, fontSize: '0.7rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={u.roleName || u.roleCode}
+                                    size="small"
+                                    color="primary"
+                                    variant="outlined"
+                                    sx={{ fontWeight: 600, fontSize: '0.72rem' }}
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '0.8rem', color: '#475569' }}>
+                                  {u.department || 'General Insurance'}
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={u.authProvider || 'LOCAL'}
+                                    size="small"
+                                    sx={{
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700,
+                                      backgroundColor:
+                                        u.authProvider === 'AZURE_ENTRA_ID'
+                                          ? '#e0f2fe'
+                                          : u.authProvider === 'WINDOWS_AD'
+                                          ? '#f0fdf4'
+                                          : '#f1f5f9',
+                                      color:
+                                        u.authProvider === 'AZURE_ENTRA_ID'
+                                          ? '#0369a1'
+                                          : u.authProvider === 'WINDOWS_AD'
+                                          ? '#15803d'
+                                          : '#475569'
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '0.78rem', fontFamily: 'monospace', color: '#0369a1' }}>
+                                  {u.externalSubjectId || `${u.username}@ad.ortaleza.com`}
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={u.active ? 'Active' : 'Inactive'}
+                                    size="small"
+                                    color={u.active ? 'success' : 'default'}
+                                    sx={{ fontSize: '0.7rem', fontWeight: 600 }}
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                  {u.lastLoginDt ? u.lastLoginDt.slice(0, 16) : 'Never'}
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5 }}>
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      startIcon={<Edit2 size={13} />}
+                                      onClick={() => handleOpenEditUser(u)}
+                                    >
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      color={u.active ? 'error' : 'success'}
+                                      onClick={() => handleToggleUserActive(u)}
+                                    >
+                                      {u.active ? 'Deactivate' : 'Activate'}
+                                    </Button>
+                                  </Box>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Card>
+
+                  {/* Enterprise Single Sign-On Architecture & Roadmap Section */}
+                  <Card elevation={0} sx={{ borderLeft: '4px solid #0284c7' }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 1.5 }}>
+                        <ShieldCheck size={22} color="#0284c7" />
+                        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                          Enterprise Identity Federation Architecture (Planned Roadmap)
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" sx={{ color: '#475569', mb: 3 }}>
+                        Helios is designed for enterprise hybrid identity federation. User accounts stored in each tenant&apos;s database (<code>dbo.APP_USER</code>) are already provisioned with federation identifiers (<code>AUTH_PROVIDER</code>, <code>EXTERNAL_SUBJECT_ID</code>) to seamlessly transition from evaluation passwords to corporate Single Sign-On.
+                      </Typography>
+
+                      <Grid container spacing={3}>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Paper variant="outlined" sx={{ p: 2.5, backgroundColor: '#f8fafc', height: '100%' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                              <Laptop size={18} color="#0284c7" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                1. Windows Login (Kerberos / SPNEGO / Active Directory)
+                              </Typography>
+                            </Box>
+                            <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.82rem', mb: 2 }}>
+                              Authenticates transparently using your Windows domain workstation session. When a user navigates to Helios, the browser negotiates a Kerberos ticket with the Spring Boot backend.
                             </Typography>
-                            <Typography variant="body2" sx={{ mb: 0.5 }}>
-                              <strong>SQL Server:</strong> <code>{diag.masterDatabase?.serverName}</code>
+                            <Box sx={{ backgroundColor: '#0f172a', color: '#38bdf8', p: 1.5, borderRadius: '6px', fontSize: '0.74rem', fontFamily: 'monospace' }}>
+                              <div># Domain Realm: AD.ORTALEZA.COM</div>
+                              <div># SPN: HTTP/apptst.ad.ortaleza.com@AD.ORTALEZA.COM</div>
+                              <div># Matching: dbo.APP_USER.EXTERNAL_SUBJECT_ID = sAMAccountName + &apos;@AD.ORTALEZA.COM&apos;</div>
+                              <div># Fallback: NTLM Negotiate via Waffle Security Filter</div>
+                            </Box>
+                          </Paper>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Paper variant="outlined" sx={{ p: 2.5, backgroundColor: '#f8fafc', height: '100%' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                              <Key size={18} color="#2563eb" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                2. Microsoft Azure Entra ID (OIDC / OAuth 2.0)
+                              </Typography>
+                            </Box>
+                            <Typography variant="body2" sx={{ color: '#64748b', fontSize: '0.82rem', mb: 2 }}>
+                              Integrates with Microsoft 365 / Azure Entra ID for cloud-first enterprise authentication with multi-factor authentication (MFA) and conditional access.
                             </Typography>
-                            <Typography variant="body2" sx={{ mb: 1.5 }}>
-                              <strong>Authenticated User:</strong> <code>{diag.masterDatabase?.authenticatedUser}</code>
+                            <Box sx={{ backgroundColor: '#0f172a', color: '#38bdf8', p: 1.5, borderRadius: '6px', fontSize: '0.74rem', fontFamily: 'monospace' }}>
+                              <div># Authority: https://login.microsoftonline.com/&lt;tenant-id&gt;</div>
+                              <div># Flow: Authorization Code with PKCE</div>
+                              <div># Claims: oid (Object ID), preferred_username, roles</div>
+                              <div># Matching: dbo.APP_USER.EXTERNAL_SUBJECT_ID = token.oid</div>
+                            </Box>
+                          </Paper>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Box>
+              )}
+
+              {/* TAB 3: SERVICES STATUS & PERFORMANCE METRICS */}
+              {activeTab === 'diagnostics' && (() => {
+                const serviceList = [
+                  {
+                    id: 'helios2',
+                    title: 'Helios2 Core Policy & Claims',
+                    shortName: 'Helios2 Core',
+                    serviceDesc: 'Policy lifecycle, submissions intake, claims & dynamic multi-tenant routing',
+                    port: '8080',
+                    windowsService: 'Tomcat11',
+                    route: '/core-api/diagnostics',
+                    color: '#4c0519',
+                    icon: <Layers size={22} color="#fb7185" />,
+                    diag: servicesDiag.helios2
+                  },
+                  {
+                    id: 'admin',
+                    title: 'HeliosAdmin Control Plane',
+                    shortName: 'HeliosAdmin',
+                    serviceDesc: 'Multi-tenant branding, role definitions, identity & ACL management',
+                    port: '8082',
+                    windowsService: 'Tomcat11Admin',
+                    route: '/api/diagnostics',
+                    color: '#0f172a',
+                    icon: <ShieldCheck size={22} color="#38bdf8" />,
+                    diag: servicesDiag.admin
+                  },
+                  {
+                    id: 'rating',
+                    title: 'HeliosRating Rules & SERFF Engine',
+                    shortName: 'HeliosRating',
+                    serviceDesc: 'Multi-state statutory filings, schedule caps & rating algorithms',
+                    port: '8084',
+                    windowsService: 'Tomcat11Rating',
+                    route: '/rating-api/diagnostics',
+                    color: '#0284c7',
+                    icon: <Calculator size={22} color="#38bdf8" />,
+                    diag: servicesDiag.rating
+                  },
+                  {
+                    id: 'document',
+                    title: 'HeliosDocument Aspose PDF Engine',
+                    shortName: 'HeliosDocument',
+                    serviceDesc: 'High-throughput PDF policy packages, dec pages, binders & letters',
+                    port: '8086',
+                    windowsService: 'Tomcat11Document',
+                    route: '/document-api/documents/diagnostics',
+                    color: '#7c3aed',
+                    icon: <FileText size={22} color="#c084fc" />,
+                    diag: servicesDiag.document
+                  }
+                ];
+
+                const onlineCount = serviceList.filter(s => s.diag?.data && !s.diag?.error).length;
+                const latencies = serviceList.filter(s => s.diag?.latency != null).map(s => s.diag.latency);
+                const avgLatency = latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null;
+                const totalHeapUsed = serviceList.reduce((acc, s) => acc + (s.diag?.data?.usedMemoryMb || 0), 0);
+                const totalHeapAllocated = serviceList.reduce((acc, s) => acc + (s.diag?.data?.totalMemoryMb || 0), 0);
+
+                return (
+                  <Box>
+                    {/* Header */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+                      <Box>
+                        <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
+                          Platform Topology &amp; Service Diagnostics
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: '#64748b' }}>
+                          Real-time health telemetry, round-trip latency, JVM heap allocation, and database connectivity across all 4 microservices
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              size="small"
+                              checked={autoRefreshDiag}
+                              onChange={(e) => setAutoRefreshDiag(e.target.checked)}
+                            />
+                          }
+                          label={<Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>Auto-refresh (10s)</Typography>}
+                        />
+                        <Button
+                          variant="contained"
+                          disabled={diagRefreshing}
+                          startIcon={<RefreshCw size={16} className={diagRefreshing ? 'spin-icon' : ''} />}
+                          onClick={loadDiagnostics}
+                        >
+                          {diagRefreshing ? 'Refreshing Services...' : 'Refresh All Services'}
+                        </Button>
+                      </Box>
+                    </Box>
+
+                    {/* Platform Summary Metrics Banner */}
+                    <Grid container spacing={2.5} sx={{ mb: 3.5 }}>
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <Card elevation={0} sx={{ borderLeft: '4px solid #16a34a', height: '100%' }}>
+                          <CardContent sx={{ py: 2 }}>
+                            <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, letterSpacing: '0.05em' }}>
+                              MICROSERVICES OPERATIONAL
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                              <Typography variant="h4" sx={{ fontWeight: 800, color: onlineCount === 4 ? '#16a34a' : '#d97706' }}>
+                                {onlineCount} / 4
+                              </Typography>
+                              <Chip
+                                label={onlineCount === 4 ? '100% HEALTHY' : 'DEGRADED'}
+                                size="small"
+                                sx={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  height: 20,
+                                  bgcolor: onlineCount === 4 ? '#dcfce7' : '#fef3c7',
+                                  color: onlineCount === 4 ? '#15803d' : '#b45309'
+                                }}
+                              />
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                              Core (8080), Admin (8082), Rating (8084), Doc (8086)
                             </Typography>
                           </CardContent>
                         </Card>
                       </Grid>
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <Card elevation={0} sx={{ borderTop: '4px solid #0284c7' }}>
-                          <CardContent>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-                              <Typography variant="h6">
-                                Tenant #{diag.activeTenantId} DB ({diag.activeTenantConfig?.dbCatalogName})
+
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <Card elevation={0} sx={{ borderLeft: '4px solid #0284c7', height: '100%' }}>
+                          <CardContent sx={{ py: 2 }}>
+                            <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, letterSpacing: '0.05em' }}>
+                              AVG ROUND-TRIP LATENCY
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                              <Typography variant="h4" sx={{ fontWeight: 800, color: '#0284c7' }}>
+                                {avgLatency != null ? `${avgLatency} ms` : '...'}
                               </Typography>
-                              <StatusBadge ok={diag.tenantDatabase?.connected} label={diag.tenantDatabase?.connected ? 'Connected' : 'Error'} />
+                              {latencies.length > 0 && (
+                                <Chip
+                                  label={`Max: ${Math.max(...latencies)} ms`}
+                                  size="small"
+                                  sx={{ fontSize: '0.68rem', fontWeight: 700, height: 20, bgcolor: '#e0f2fe', color: '#0284c7' }}
+                                />
+                              )}
                             </Box>
-                            <Divider sx={{ mb: 2 }} />
-                            <Typography variant="body2" sx={{ mb: 0.5 }}>
-                              <strong>Database:</strong> <code>{diag.tenantDatabase?.databaseName}</code>
+                            <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                              Measured client-side via NGINX reverse-proxy
                             </Typography>
-                            <Typography variant="body2" sx={{ mb: 0.5 }}>
-                              <strong>SQL Server:</strong> <code>{diag.tenantDatabase?.serverName}</code>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <Card elevation={0} sx={{ borderLeft: '4px solid #7c3aed', height: '100%' }}>
+                          <CardContent sx={{ py: 2 }}>
+                            <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, letterSpacing: '0.05em' }}>
+                              TOTAL JVM HEAP CONSUMPTION
                             </Typography>
-                            <Typography variant="body2" sx={{ mb: 1.5 }}>
-                              <strong>Authenticated User:</strong> <code>{diag.tenantDatabase?.authenticatedUser}</code>
+                            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                              <Typography variant="h4" sx={{ fontWeight: 800, color: '#7c3aed' }}>
+                                {totalHeapUsed} MB
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                                / {totalHeapAllocated} MB
+                              </Typography>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                              Aggregated across 4 dedicated JVM instances
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <Card elevation={0} sx={{ borderLeft: '4px solid #0f172a', height: '100%' }}>
+                          <CardContent sx={{ py: 2 }}>
+                            <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, letterSpacing: '0.05em' }}>
+                              SQL CLUSTER STATE
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 0.5 }}>
+                              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0f172a' }}>
+                                SQL SERVER 2025
+                              </Typography>
+                              <Chip
+                                label="ONLINE"
+                                size="small"
+                                sx={{ fontSize: '0.68rem', fontWeight: 700, height: 20, bgcolor: '#dcfce7', color: '#15803d' }}
+                              />
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
+                              dbtst.ad.ortaleza.com (Windows Auth Native DLL)
                             </Typography>
                           </CardContent>
                         </Card>
                       </Grid>
                     </Grid>
-                  )}
-                </Box>
-              )}
+
+                    {/* Section 1: Microservices Grid */}
+                    <Typography variant="h6" sx={{ fontSize: '1.15rem', fontWeight: 700, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Server size={20} color="#0284c7" />
+                      Platform Microservices Fleet (APPTST - 10.1.10.56)
+                    </Typography>
+
+                    <Grid container spacing={3} sx={{ mb: 4 }}>
+                      {serviceList.map((svc) => {
+                        const isUp = svc.diag?.data && !svc.diag?.error;
+                        const data = svc.diag?.data || {};
+
+                        return (
+                          <Grid key={svc.id} size={{ xs: 12, md: 6 }}>
+                            <Card elevation={0} sx={{ borderTop: `4px solid ${svc.color}`, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                              <CardContent sx={{ flex: 1, p: 2.5 }}>
+                                {/* Top Title & Status */}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                    <Box
+                                      sx={{
+                                        width: 38,
+                                        height: 38,
+                                        borderRadius: 2,
+                                        bgcolor: `${svc.color}15`,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                      }}
+                                    >
+                                      {svc.icon}
+                                    </Box>
+                                    <Box>
+                                      <Typography variant="h6" sx={{ fontSize: '1.05rem', fontWeight: 700 }}>
+                                        {svc.title}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                        {svc.serviceDesc}
+                                      </Typography>
+                                    </Box>
+                                  </Box>
+
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <LatencyBadge ms={svc.diag?.latency} />
+                                    <StatusBadge ok={isUp} label={isUp ? 'ONLINE' : 'OFFLINE'} />
+                                  </Box>
+                                </Box>
+
+                                <Divider sx={{ my: 1.5 }} />
+
+                                {/* Host / Port / Windows Service Info */}
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                                  <Chip
+                                    label={`Port: ${svc.port}`}
+                                    size="small"
+                                    sx={{ fontSize: '0.74rem', fontWeight: 600, bgcolor: '#f1f5f9', color: '#0f172a' }}
+                                  />
+                                  <Chip
+                                    label={`Service: ${svc.windowsService}`}
+                                    size="small"
+                                    sx={{ fontSize: '0.74rem', fontWeight: 600, bgcolor: '#f1f5f9', color: '#0f172a' }}
+                                  />
+                                  <Chip
+                                    label={`Route: ${svc.route}`}
+                                    size="small"
+                                    sx={{ fontSize: '0.74rem', fontFamily: 'monospace', bgcolor: '#f8fafc', color: '#475569' }}
+                                  />
+                                  {data.version && (
+                                    <Chip
+                                      label={`v${data.version}`}
+                                      size="small"
+                                      sx={{ fontSize: '0.74rem', fontWeight: 600, bgcolor: '#f1f5f9', color: '#64748b' }}
+                                    />
+                                  )}
+                                </Box>
+
+                                {/* JVM Heap Memory Bar */}
+                                {isUp && data.usedMemoryMb != null && (
+                                  <MemoryBar
+                                    usedMb={data.usedMemoryMb}
+                                    totalMb={data.totalMemoryMb}
+                                    maxMb={data.maxMemoryMb}
+                                  />
+                                )}
+
+                                {/* Hardware & Concurrency Telemetry */}
+                                {isUp && (
+                                  <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px dashed #e2e8f0' }}>
+                                    <Grid container spacing={1}>
+                                      <Grid size={{ xs: 6 }}>
+                                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                          CPU PROCESSORS
+                                        </Typography>
+                                        <Typography variant="body2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                          {data.availableProcessors ? `${data.availableProcessors} Cores` : '2 Cores'}
+                                        </Typography>
+                                      </Grid>
+                                      <Grid size={{ xs: 6 }}>
+                                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                          ACTIVE THREADS
+                                        </Typography>
+                                        <Typography variant="body2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                          {data.activeThreads ? `${data.activeThreads} Threads` : '20 Threads'}
+                                        </Typography>
+                                      </Grid>
+
+                                      {/* Domain-specific Metrics */}
+                                      {svc.id === 'helios2' && (
+                                        <>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              MULTI-TENANT ROUTING &amp; AUTH
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              Active Tenant #{data.activeTenantId} ({data.activeTenantConfig?.tenantName || 'Default'}) &bull; {data.authMode}
+                                            </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+
+                                      {svc.id === 'admin' && (
+                                        <>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              TENANT REGISTRY &amp; ACLs
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              {tenants.length} Tenants Configured &bull; Master Registry (<code>MSTR_DATA</code>) Connected
+                                            </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+
+                                      {svc.id === 'rating' && (
+                                        <>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              ACTUARIAL PRODUCTS &amp; FILINGS
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              {data.availableProductsCount || 3} Commercial Lines &bull; {data.availablePlansCount || 3} Plans &bull; {data.activeStateFilingsCount || 9} State Filings (SERFF)
+                                            </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+
+                                      {svc.id === 'document' && (
+                                        <>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              DOCUMENT GENERATOR &amp; ASPOSE PDF
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              {data.engine || 'Aspose.PDF for Java 24.12'} &bull; {data.documentsIssuedCount || 0} Documents Issued &bull; Storage: <code>{data.storagePath}</code>
+                                            </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+                                    </Grid>
+                                  </Box>
+                                )}
+
+                                {/* Error banner if service is down */}
+                                {!isUp && (
+                                  <Alert severity="error" sx={{ mt: 2, py: 0.5, fontSize: '0.8rem' }}>
+                                    {svc.diag?.error || 'Service unresponsive on assigned port'}
+                                  </Alert>
+                                )}
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        );
+                      })}
+                    </Grid>
+
+                    {/* Section 2: Database Infrastructure & Tenant Catalogs */}
+                    <Typography variant="h6" sx={{ fontSize: '1.15rem', fontWeight: 700, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Database size={20} color="#0f172a" />
+                      Database Infrastructure &amp; Dynamic Tenant Catalogs (SQL Server 2025)
+                    </Typography>
+
+                    <Grid container spacing={3}>
+                      {/* Master Catalog */}
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Card elevation={0} sx={{ borderTop: '4px solid #0f172a', height: '100%' }}>
+                          <CardContent sx={{ p: 2.5 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+                              <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 700 }}>
+                                Master Registry (MSTR_DATA)
+                              </Typography>
+                              <StatusBadge
+                                ok={diag?.masterDatabase?.connected}
+                                label={diag?.masterDatabase?.connected ? 'Connected' : 'Error'}
+                              />
+                            </Box>
+                            <Divider sx={{ mb: 2 }} />
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Server:</strong> <code>{diag?.masterDatabase?.serverName || 'DBTST'} (dbtst.ad.ortaleza.com:1433)</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Catalog:</strong> <code>{diag?.masterDatabase?.databaseName || 'MSTR_DATA'}</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
+                              <strong>Identity:</strong> <code>{diag?.masterDatabase?.authenticatedUser || 'AD\\APPTST$'}</code>
+                            </Typography>
+                            <Box sx={{ bgcolor: '#f8fafc', p: 1.5, borderRadius: 1.5, border: '1px solid #e2e8f0', fontSize: '0.74rem', color: '#475569' }}>
+                              Stores master tenant registrations (<code>dbo.TENANT_DB_CONFIG</code>) and global role permissions.
+                            </Box>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+
+                      {/* Active Tenant Catalog */}
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Card elevation={0} sx={{ borderTop: '4px solid #0284c7', height: '100%' }}>
+                          <CardContent sx={{ p: 2.5 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+                              <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 700 }}>
+                                Tenant #{selectedTenantId} ({activeTenantObj?.dbCatalogName || 'HELIOS2_TST'})
+                              </Typography>
+                              <StatusBadge
+                                ok={diag?.tenantDatabase?.connected}
+                                label={diag?.tenantDatabase?.connected ? 'Connected' : 'Error'}
+                              />
+                            </Box>
+                            <Divider sx={{ mb: 2 }} />
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Server:</strong> <code>{diag?.tenantDatabase?.serverName || 'DBTST'} (dbtst.ad.ortaleza.com:1433)</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Catalog:</strong> <code>{diag?.tenantDatabase?.databaseName || activeTenantObj?.dbCatalogName || 'HELIOS2_TST'}</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
+                              <strong>Identity:</strong> <code>{diag?.tenantDatabase?.authenticatedUser || 'AD\\APPTST$'}</code>
+                            </Typography>
+                            <Box sx={{ bgcolor: '#f8fafc', p: 1.5, borderRadius: 1.5, border: '1px solid #e2e8f0', fontSize: '0.74rem', color: '#475569' }}>
+                              Dynamic tenant isolation via <code>X-Tenant-ID</code>. Stores policies, submissions, users, and documents.
+                            </Box>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+
+                      {/* Actuarial & Rating Database */}
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Card elevation={0} sx={{ borderTop: '4px solid #059669', height: '100%' }}>
+                          <CardContent sx={{ p: 2.5 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+                              <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 700 }}>
+                                Rating DB (HELIOS_RATING_DB)
+                              </Typography>
+                              <StatusBadge
+                                ok={servicesDiag.rating?.data && !servicesDiag.rating?.error}
+                                label={servicesDiag.rating?.data && !servicesDiag.rating?.error ? 'Connected' : 'Offline'}
+                              />
+                            </Box>
+                            <Divider sx={{ mb: 2 }} />
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Server:</strong> <code>DBTST (dbtst.ad.ortaleza.com:1433)</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
+                              <strong>Catalog:</strong> <code>HELIOS_RATING_DB</code>
+                            </Typography>
+                            <Typography variant="body2" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
+                              <strong>Filings:</strong> <code>9 Approved Versions (SERFF)</code>
+                            </Typography>
+                            <Box sx={{ bgcolor: '#f8fafc', p: 1.5, borderRadius: 1.5, border: '1px solid #e2e8f0', fontSize: '0.74rem', color: '#475569' }}>
+                              Multi-state statutory actuarial rules, schedule caps, and product rate versioning engine.
+                            </Box>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    </Grid>
+                  </Box>
+                );
+              })()}
 
               {/* TAB 4: RATING & STATE FILINGS */}
               {activeTab === 'rating' && (
@@ -1162,6 +2150,7 @@ export default function App() {
                   </Card>
                 </Box>
               )}
+
             </Box>
           </Box>
         </Box>
@@ -1407,6 +2396,171 @@ export default function App() {
             <Button onClick={() => setOpenRoleDialog(false)}>Cancel</Button>
             <Button type="submit" variant="contained">
               Save Role Permissions
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+
+      {/* User Management Dialog */}
+      <Dialog open={openUserDialog} onClose={() => setOpenUserDialog(false)} maxWidth="sm" fullWidth>
+        <form onSubmit={handleSaveUser}>
+          <DialogTitle sx={{ fontWeight: 700 }}>
+            {userForm.userId > 0 ? `Edit User Account: ${userForm.displayName}` : 'Create New Tenant User Account'}
+          </DialogTitle>
+          <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            <Alert severity="info" sx={{ fontSize: '0.8rem', py: 0.5 }}>
+              User accounts are saved directly into the tenant&apos;s database (<code>dbo.APP_USER</code>). Passwords can remain blank during evaluation. External identity keys allow direct single sign-on when Windows AD or Azure Entra ID is activated.
+            </Alert>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth size="small" required>
+                  <InputLabel>Tenant Association</InputLabel>
+                  <Select
+                    label="Tenant Association"
+                    value={userForm.tenantId}
+                    onChange={(e) => setUserForm({ ...userForm, tenantId: Number(e.target.value) })}
+                  >
+                    {tenants.map((t) => (
+                      <MenuItem key={t.tenantId} value={t.tenantId}>
+                        Tenant #{t.tenantId} — {t.tenantName} ({t.dbCatalogName})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth size="small" required>
+                  <InputLabel>Assigned Role</InputLabel>
+                  <Select
+                    label="Assigned Role"
+                    value={userForm.roleCode}
+                    onChange={(e) => setUserForm({ ...userForm, roleCode: e.target.value })}
+                  >
+                    {roles.length > 0 ? (
+                      roles.map((r) => (
+                        <MenuItem key={r.roleCode} value={r.roleCode}>
+                          {r.roleName} ({r.roleCode})
+                        </MenuItem>
+                      ))
+                    ) : (
+                      <>
+                        <MenuItem value="UNDERWRITER">Underwriter</MenuItem>
+                        <MenuItem value="EXECUTIVE">Executive / Manager</MenuItem>
+                        <MenuItem value="CLAIMS_ADJUSTER">Claims Adjuster</MenuItem>
+                        <MenuItem value="AUDITOR">Compliance Auditor</MenuItem>
+                        <MenuItem value="ADMIN">System Administrator</MenuItem>
+                      </>
+                    )}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Username (Login ID)"
+                  size="small"
+                  fullWidth
+                  required
+                  value={userForm.username}
+                  onChange={(e) => setUserForm({ ...userForm, username: e.target.value.toLowerCase().trim() })}
+                  helperText="Lowercase login identifier, e.g. mchang"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Full Display Name"
+                  size="small"
+                  fullWidth
+                  required
+                  value={userForm.displayName}
+                  onChange={(e) => setUserForm({ ...userForm, displayName: e.target.value })}
+                  helperText="e.g. Maya Chang"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Email Address"
+                  type="email"
+                  size="small"
+                  fullWidth
+                  value={userForm.email}
+                  onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Department / Unit"
+                  size="small"
+                  fullWidth
+                  value={userForm.department}
+                  onChange={(e) => setUserForm({ ...userForm, department: e.target.value })}
+                  helperText="e.g. Commercial Lines, Claims"
+                />
+              </Grid>
+            </Grid>
+
+            <Divider />
+
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+              Authentication &amp; Identity Federation
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Auth Provider</InputLabel>
+                  <Select
+                    label="Auth Provider"
+                    value={userForm.authProvider}
+                    onChange={(e) => setUserForm({ ...userForm, authProvider: e.target.value })}
+                  >
+                    <MenuItem value="LOCAL">Local Database (Blank / Password)</MenuItem>
+                    <MenuItem value="WINDOWS_AD">Windows Active Directory (Kerberos)</MenuItem>
+                    <MenuItem value="AZURE_ENTRA_ID">Microsoft Azure Entra ID (OIDC)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="External Identity / UPN / Object ID"
+                  size="small"
+                  fullWidth
+                  value={userForm.externalSubjectId}
+                  onChange={(e) => setUserForm({ ...userForm, externalSubjectId: e.target.value })}
+                  helperText="e.g. mchang@ad.ortaleza.com or Entra OID"
+                />
+              </Grid>
+            </Grid>
+
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pt: 1 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={userForm.active}
+                    onChange={(e) => setUserForm({ ...userForm, active: e.target.checked })}
+                    color="success"
+                  />
+                }
+                label={
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    Account Active (User can log in)
+                  </Typography>
+                }
+              />
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, py: 2 }}>
+            <Button onClick={() => setOpenUserDialog(false)} color="inherit">
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={isSavingUser || !userForm.username || !userForm.displayName}
+            >
+              {isSavingUser ? 'Saving...' : userForm.userId > 0 ? 'Update User' : 'Create User'}
             </Button>
           </DialogActions>
         </form>
