@@ -1096,6 +1096,12 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
           </Button>
         </Box>
 
+        {flash && (
+          <Alert severity={flash.type} onClose={() => setFlash(null)} sx={{ mb: 2 }}>
+            {flash.text}
+          </Alert>
+        )}
+
         <Card elevation={0} sx={{ mb: 3, borderTop: '4px solid #013a12' }}>
           <CardContent>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -1217,6 +1223,35 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             </TableContainer>
           </CardContent>
         </Card>
+
+        {/* Rating & Quote Creation for Selected Submission */}
+        <RatingQuoteDialog
+          open={Boolean(ratingSubForQuote)}
+          onClose={() => setRatingSubForQuote(null)}
+          submission={ratingSubForQuote}
+          apiFetch={apiFetch}
+          activeTenantId={activeTenantId}
+          onQuoteSaved={async (savedQuote) => {
+            setFlash({
+              type: 'success',
+              text: `Quote ${savedQuote.quoteId} (${savedQuote.premium}) successfully saved to dbo.UW_QUOTE for ${ratingSubForQuote?.orgName}!`
+            });
+            if (selectedSub && selectedSub.submsnId === savedQuote.submsnId) {
+              setSelectedSub((prev) => ({
+                ...prev,
+                status: 'Quoted',
+                quotes: [...(prev.quotes || []), savedQuote]
+              }));
+            }
+            await loadSubmissions();
+          }}
+        />
+
+        {/* Quote Trace Detail Modal */}
+        <QuoteDetailDialog
+          quote={inspectingQuoteDetail}
+          onClose={() => setInspectingQuoteDetail(null)}
+        />
       </Box>
     );
   }
@@ -1729,14 +1764,14 @@ const RatingQuoteDialog = ({
     setIsSaving(true);
     setError(null);
     try {
-      const prem = `${Number(rateResult.finalAnnualPremium).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-      const lim = `${Number(ratingForm.occurrenceLimit).toLocaleString()}`;
-      const ret = `${Number(ratingForm.retentionAmount).toLocaleString()}`;
+      const prem = `$${Number(rateResult.finalAnnualPremium).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+      const lim = `$${Number(ratingForm.occurrenceLimit).toLocaleString()}`;
+      const ret = `$${Number(ratingForm.retentionAmount).toLocaleString()}`;
 
       const saved = await apiFetch('/api/quotes', {
         method: 'POST',
         body: JSON.stringify({
-          submsnId: Number(selectedSubId) || 0,
+          submsnId: Number(selectedSubId) || (submission ? Number(submission.submsnId) : 0),
           productCode: ratingForm.productCode,
           stateCode: ratingForm.stateCode,
           exposureVal: ratingForm.exposureValue,
