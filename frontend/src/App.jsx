@@ -67,7 +67,13 @@ import {
   Key,
   Users,
   LogIn,
-  Laptop
+  Laptop,
+  Printer,
+  Download,
+  Eye,
+  ExternalLink,
+  FileSpreadsheet,
+  FileCheck
 } from 'lucide-react';
 
 // --- Dynamic Per-Tenant Theme Builder ---
@@ -645,6 +651,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
           <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
             <Tab label="File List" />
             <Tab label="Active File" />
+            <Tab label="Documents & Forms" />
           </Tabs>
         </Box>
 
@@ -788,6 +795,24 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
             </Card>
           </Box>
         )}
+
+        {activeTab === 2 && (
+          <DocumentsManager
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            entityType="POLICY"
+            entityId={selectedPolicy.id || 101}
+            entityNbr={activeFile ? String(activeFile.id) : `POL-${selectedPolicy.id || '2026'}`}
+            defaultInsuredName={selectedPolicy.name}
+            defaultProductType={selectedPolicy.industry || 'Technology Errors & Omissions'}
+            defaultEffectiveDate={activeFile?.fileLevelInfo?.effectiveDate || '2026-03-01'}
+            defaultExpirationDate={activeFile?.fileLevelInfo?.expirationDate || '2027-03-01'}
+            defaultLimit={activeFile?.fileLevelInfo?.limit || '$2,000,000'}
+            defaultDeductible={activeFile?.fileLevelInfo?.retention || '$25,000'}
+            quotes={activeFile?.quotes || []}
+            title={`Policy Documents & Formal Schedules — ${selectedPolicy.name}`}
+          />
+        )}
       </Box>
     );
   }
@@ -918,6 +943,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
 // --- 3. Submissions View ---
 const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [subTab, setSubTab] = useState(0);
+  const [subDetailTab, setSubDetailTab] = useState(0);
   const [submissions, setSubmissions] = useState([]);
   const [parties, setParties] = useState([]);
   const [selectedPartyId, setSelectedPartyId] = useState(null);
@@ -1193,94 +1219,130 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
           </CardContent>
         </Card>
 
-        <Card elevation={0}>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Box>
-                <Typography variant="h6">Quote Level Information</Typography>
-                <Typography variant="caption" color="textSecondary">
-                  Approved rates calculated with SERFF regulatory rules and stored in dbo.UW_QUOTE
-                </Typography>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+          <Tabs value={subDetailTab} onChange={(e, nv) => setSubDetailTab(nv)}>
+            <Tab label="Quotes & SERFF Rating" icon={<Calculator size={16} />} iconPosition="start" />
+            <Tab label="Documents & Forms" icon={<Printer size={16} />} iconPosition="start" />
+          </Tabs>
+        </Box>
+
+        {subDetailTab === 0 && (
+          <Card elevation={0}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Box>
+                  <Typography variant="h6">Quote Level Information</Typography>
+                  <Typography variant="caption" color="textSecondary">
+                    Approved rates calculated with SERFF regulatory rules and stored in dbo.UW_QUOTE
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<RefreshCw size={15} />}
+                    onClick={() => refreshSubmission(selectedSub.submsnId)}
+                  >
+                    Refresh
+                  </Button>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<Calculator size={16} />}
+                    onClick={() => setRatingSubForQuote(selectedSub)}
+                  >
+                    Rate &amp; Issue New Quote
+                  </Button>
+                </Box>
               </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<RefreshCw size={15} />}
-                  onClick={() => refreshSubmission(selectedSub.submsnId)}
-                >
-                  Refresh
-                </Button>
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={<Calculator size={16} />}
-                  onClick={() => setRatingSubForQuote(selectedSub)}
-                >
-                  Rate &amp; Issue New Quote
-                </Button>
-              </Box>
-            </Box>
-            <TableContainer component={Paper} elevation={0} variant="outlined">
-              <Table size="small">
-                <TableHead sx={{ backgroundColor: '#f8fafc' }}>
-                  <TableRow>
-                    <TableCell>Quote ID</TableCell>
-                    <TableCell>Product</TableCell>
-                    <TableCell>State</TableCell>
-                    <TableCell>SERFF Filing #</TableCell>
-                    <TableCell>Limit / Retention</TableCell>
-                    <TableCell>Generated</TableCell>
-                    <TableCell>Premium</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell align="right">Details</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(selectedSub.quotes || []).length === 0 ? (
+              <TableContainer component={Paper} elevation={0} variant="outlined">
+                <Table size="small">
+                  <TableHead sx={{ backgroundColor: '#f8fafc' }}>
                     <TableRow>
-                      <TableCell colSpan={9} sx={{ textAlign: 'center', py: 3, color: '#94a3b8' }}>
-                        No quotes issued yet for this submission. Click &quot;Rate &amp; Issue New Quote&quot; above.
-                      </TableCell>
+                      <TableCell>Quote ID</TableCell>
+                      <TableCell>Product</TableCell>
+                      <TableCell>State</TableCell>
+                      <TableCell>SERFF Filing #</TableCell>
+                      <TableCell>Limit / Retention</TableCell>
+                      <TableCell>Generated</TableCell>
+                      <TableCell>Premium</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell align="right">Actions</TableCell>
                     </TableRow>
-                  ) : (
-                    (selectedSub.quotes || []).map((q) => (
-                      <TableRow key={q.quoteId} hover>
-                        <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>{q.quoteId}</TableCell>
-                        <TableCell>
-                          <Chip label={q.productCode || selectedSub.productType || 'TECH_EO'} size="small" sx={{ fontSize: '0.7rem', height: 22 }} />
-                        </TableCell>
-                        <TableCell>
-                          <Chip label={q.stateCode || 'CA'} size="small" variant="outlined" sx={{ fontWeight: 700, fontSize: '0.7rem' }} />
-                        </TableCell>
-                        <TableCell>
-                          <code>{q.serffTrackingNbr || 'SERFF-2025-BASE'}</code>
-                        </TableCell>
-                        <TableCell sx={{ fontSize: '0.8rem' }}>
-                          {q.limitAmt || selectedSub.fileLevelInfo?.limit || '$5,000,000'} / {q.retentionAmt || selectedSub.fileLevelInfo?.retention || '$50,000'}
-                        </TableCell>
-                        <TableCell sx={{ fontSize: '0.82rem' }}>{q.generated}</TableCell>
-                        <TableCell sx={{ fontWeight: 800, color: 'primary.main', fontSize: '0.92rem' }}>{q.premium}</TableCell>
-                        <TableCell>
-                          <StatusPill status={q.status} />
-                        </TableCell>
-                        <TableCell align="right">
-                          <Button
-                            size="small"
-                            variant="text"
-                            onClick={() => setInspectingQuoteDetail({ ...q, orgName: selectedSub.orgName, submsnNbr: selectedSub.submsnNbr })}
-                          >
-                            Trace
-                          </Button>
+                  </TableHead>
+                  <TableBody>
+                    {(selectedSub.quotes || []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} sx={{ textAlign: 'center', py: 3, color: '#94a3b8' }}>
+                          No quotes issued yet for this submission. Click &quot;Rate &amp; Issue New Quote&quot; above.
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </CardContent>
-        </Card>
+                    ) : (
+                      (selectedSub.quotes || []).map((q) => (
+                        <TableRow key={q.quoteId} hover>
+                          <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>{q.quoteId}</TableCell>
+                          <TableCell>
+                            <Chip label={q.productCode || selectedSub.productType || 'TECH_EO'} size="small" sx={{ fontSize: '0.7rem', height: 22 }} />
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={q.stateCode || 'CA'} size="small" variant="outlined" sx={{ fontWeight: 700, fontSize: '0.7rem' }} />
+                          </TableCell>
+                          <TableCell>
+                            <code>{q.serffTrackingNbr || 'SERFF-2025-BASE'}</code>
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.8rem' }}>
+                            {q.limitAmt || selectedSub.fileLevelInfo?.limit || '$5,000,000'} / {q.retentionAmt || selectedSub.fileLevelInfo?.retention || '$50,000'}
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.82rem' }}>{q.generated}</TableCell>
+                          <TableCell sx={{ fontWeight: 800, color: 'primary.main', fontSize: '0.92rem' }}>{q.premium}</TableCell>
+                          <TableCell>
+                            <StatusPill status={q.status} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Button
+                              size="small"
+                              variant="text"
+                              onClick={() => setInspectingQuoteDetail({ ...q, orgName: selectedSub.orgName, submsnNbr: selectedSub.submsnNbr })}
+                            >
+                              Trace
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<Printer size={13} />}
+                              sx={{ ml: 1 }}
+                              onClick={() => setSubDetailTab(1)}
+                            >
+                              PDF
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {subDetailTab === 1 && (
+          <DocumentsManager
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            entityType="SUBMISSION"
+            entityId={selectedSub.submsnId}
+            entityNbr={selectedSub.submsnNbr}
+            defaultInsuredName={selectedSub.orgName}
+            defaultProductType={selectedSub.productType || 'Technology Errors & Omissions'}
+            defaultEffectiveDate={selectedSub.fileLevelInfo?.effectiveDate || '2026-03-01'}
+            defaultExpirationDate={selectedSub.fileLevelInfo?.expirationDate || '2027-03-01'}
+            defaultLimit={selectedSub.fileLevelInfo?.limit || '$2,000,000'}
+            defaultDeductible={selectedSub.fileLevelInfo?.retention || '$25,000'}
+            quotes={selectedSub.quotes || []}
+            title={`Submission Documents & Forms — ${selectedSub.submsnNbr}`}
+          />
+        )}
 
         {/* Rating & Quote Creation for Selected Submission */}
         <RatingQuoteDialog
@@ -2584,6 +2646,705 @@ const QuotesView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
   );
 };
 
+// ============================================================================
+// 4.5. DOCUMENTS & FORMS MANAGER (Aspose.PDF Java Microservice Engine)
+// Generates & manages Policy Dec Pages, Quote Proposals, and Binder Letters
+// ============================================================================
+const DocumentsManager = ({
+  apiFetch,
+  activeTenantId,
+  entityType = null,
+  entityId = null,
+  entityNbr = '',
+  defaultInsuredName = '',
+  defaultProductType = 'Technology Errors & Omissions',
+  defaultPremium = '$8,500',
+  defaultLimit = '$2,000,000',
+  defaultDeductible = '$25,000',
+  defaultEffectiveDate = '2026-03-01',
+  defaultExpirationDate = '2027-03-01',
+  quotes = [],
+  title = 'Documents & Forms'
+}) => {
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterType, setFilterType] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [openGenerateModal, setOpenGenerateModal] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [flash, setFlash] = useState(null);
+
+  // Generator form state
+  const [genForm, setGenForm] = useState({
+    docType: 'DEC_PAGE',
+    entityType: entityType || 'POLICY',
+    entityId: entityId || 101,
+    entityNbr: entityNbr || 'POL-2026-00101',
+    insuredName: defaultInsuredName || 'Insured Enterprise LLC',
+    productType: defaultProductType || 'Technology Errors & Omissions',
+    annualPremium: String(defaultPremium || '$8,500').replace(/[^0-9.]/g, '') || '8500',
+    coverageLimit: String(defaultLimit || '$2,000,000').replace(/[^0-9.]/g, '') || '2000000',
+    deductible: String(defaultDeductible || '$25,000').replace(/[^0-9.]/g, '') || '25000',
+    effectiveDate: defaultEffectiveDate || '2026-03-01',
+    expirationDate: defaultExpirationDate || '2027-03-01',
+    selectedQuoteId: ''
+  });
+
+  const loadDocuments = useCallback(async () => {
+    setLoading(true);
+    try {
+      let url = `/document-api/documents?tenantId=${activeTenantId}`;
+      if (entityType) url += `&entityType=${encodeURIComponent(entityType)}`;
+      if (entityId) url += `&entityId=${encodeURIComponent(entityId)}`;
+      const data = await apiFetch(url);
+      setDocuments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load documents:', err);
+      setFlash({ type: 'error', text: `Failed to load documents: ${err.message}` });
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, activeTenantId, entityType, entityId]);
+
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments]);
+
+  // Sync generator form whenever props change
+  useEffect(() => {
+    setGenForm((prev) => ({
+      ...prev,
+      entityType: entityType || prev.entityType || 'POLICY',
+      entityId: entityId || prev.entityId || 101,
+      entityNbr: entityNbr || prev.entityNbr || 'POL-2026-00101',
+      insuredName: defaultInsuredName || prev.insuredName,
+      productType: defaultProductType || prev.productType,
+      annualPremium: String(defaultPremium || '$8,500').replace(/[^0-9.]/g, '') || '8500',
+      coverageLimit: String(defaultLimit || '$2,000,000').replace(/[^0-9.]/g, '') || '2000000',
+      deductible: String(defaultDeductible || '$25,000').replace(/[^0-9.]/g, '') || '25000',
+      effectiveDate: defaultEffectiveDate || prev.effectiveDate,
+      expirationDate: defaultExpirationDate || prev.expirationDate
+    }));
+  }, [entityType, entityId, entityNbr, defaultInsuredName, defaultProductType, defaultPremium, defaultLimit, defaultDeductible, defaultEffectiveDate, defaultExpirationDate]);
+
+  const handleSelectQuoteForGen = (quoteId) => {
+    const q = (quotes || []).find((item) => String(item.quoteId) === String(quoteId));
+    if (q) {
+      setGenForm((prev) => ({
+        ...prev,
+        selectedQuoteId: quoteId,
+        docType: 'QUOTE_PROPOSAL',
+        productType: q.productCode || prev.productType,
+        annualPremium: String(q.premium || prev.annualPremium).replace(/[^0-9.]/g, ''),
+        coverageLimit: String(q.limitAmt || prev.coverageLimit).replace(/[^0-9.]/g, '') || prev.coverageLimit,
+        deductible: String(q.retentionAmt || prev.deductible).replace(/[^0-9.]/g, '') || prev.deductible
+      }));
+    } else {
+      setGenForm((prev) => ({ ...prev, selectedQuoteId: '' }));
+    }
+  };
+
+  const handleGenerate = async (e) => {
+    if (e) e.preventDefault();
+    setGenerating(true);
+    try {
+      const payload = {
+        tenantId: Number(activeTenantId),
+        entityType: genForm.entityType,
+        entityId: Number(genForm.entityId),
+        entityNbr: genForm.entityNbr,
+        docType: genForm.docType,
+        insuredName: genForm.insuredName,
+        productType: genForm.productType,
+        annualPremium: parseFloat(genForm.annualPremium) || 0,
+        coverageLimit: parseFloat(genForm.coverageLimit) || 0,
+        deductible: parseFloat(genForm.deductible) || 0,
+        effectiveDate: genForm.effectiveDate,
+        expirationDate: genForm.expirationDate
+      };
+
+      const result = await apiFetch('/document-api/documents/generate', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      setFlash({
+        type: 'success',
+        text: `Document #${result.documentId} ("${result.docTitle}") generated successfully via Aspose.PDF!`
+      });
+      setOpenGenerateModal(false);
+      await loadDocuments();
+      setPreviewDoc(result);
+    } catch (err) {
+      setFlash({ type: 'error', text: `Document generation failed: ${err.message}` });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const filteredDocs = useMemo(() => {
+    return documents.filter((d) => {
+      const matchType = filterType === 'ALL' || d.docType === filterType;
+      const matchSearch =
+        !searchQuery ||
+        d.docTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.fileName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.entityNbr?.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchType && matchSearch;
+    });
+  }, [documents, filterType, searchQuery]);
+
+  const stats = useMemo(() => {
+    const decCount = documents.filter((d) => d.docType === 'DEC_PAGE').length;
+    const quoteCount = documents.filter((d) => d.docType === 'QUOTE_PROPOSAL' || d.docType === 'QUOTE').length;
+    const binderCount = documents.filter((d) => d.docType === 'BINDER_LETTER' || d.docType === 'LETTER').length;
+    const totalBytes = documents.reduce((sum, d) => sum + (d.fileSizeBytes || 0), 0);
+    return { decCount, quoteCount, binderCount, totalBytes, totalDocs: documents.length };
+  }, [documents]);
+
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  };
+
+  const renderDocTypeChip = (type) => {
+    switch (type) {
+      case 'DEC_PAGE':
+        return <Chip label="Policy Dec Page" size="small" sx={{ bgcolor: '#ecfdf5', color: '#047857', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #a7f3d0' }} />;
+      case 'QUOTE_PROPOSAL':
+      case 'QUOTE':
+        return <Chip label="Quote Proposal" size="small" sx={{ bgcolor: '#eff6ff', color: '#1d4ed8', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #bfdbfe' }} />;
+      case 'BINDER_LETTER':
+      case 'LETTER':
+        return <Chip label="Binder Letter" size="small" sx={{ bgcolor: '#fdf4ff', color: '#7e22ce', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #f0abfc' }} />;
+      default:
+        return <Chip label={type} size="small" sx={{ fontSize: '0.72rem' }} />;
+    }
+  };
+
+  return (
+    <Box>
+      {flash && (
+        <Alert severity={flash.type} onClose={() => setFlash(null)} sx={{ mb: 2 }}>
+          {flash.text}
+        </Alert>
+      )}
+
+      {/* Metrics Row */}
+      <Grid container spacing={2} sx={{ mb: 2.5 }}>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Total Documents</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main', mt: 0.2 }}>
+                {stats.totalDocs}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Declarations Schedules</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#059669', mt: 0.2 }}>
+                {stats.decCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Quote Proposals</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#2563eb', mt: 0.2 }}>
+                {stats.quoteCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Binder Letters</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#9333ea', mt: 0.2 }}>
+                {stats.binderCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Main Documents Table Card */}
+      <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+        <CardContent sx={{ p: 2.5 }}>
+          {/* Header & Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Printer size={20} style={{ color: '#059669' }} />
+                {title}
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                Stored in Tenant DB <code>dbo.DOC_DOCUMENT</code> and managed via Aspose.PDF Engine
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<RefreshCw size={15} />}
+                onClick={loadDocuments}
+                disabled={loading}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<Plus size={16} />}
+                onClick={() => setOpenGenerateModal(true)}
+                sx={{ fontWeight: 600 }}
+              >
+                Generate Document
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Filter Bar */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 1.5, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {[
+                { id: 'ALL', label: `All (${documents.length})` },
+                { id: 'DEC_PAGE', label: `Dec Pages (${stats.decCount})` },
+                { id: 'QUOTE_PROPOSAL', label: `Quotes (${stats.quoteCount})` },
+                { id: 'BINDER_LETTER', label: `Binder Letters (${stats.binderCount})` }
+              ].map((pill) => (
+                <Chip
+                  key={pill.id}
+                  label={pill.label}
+                  size="small"
+                  clickable
+                  variant={filterType === pill.id ? 'filled' : 'outlined'}
+                  color={filterType === pill.id ? 'primary' : 'default'}
+                  onClick={() => setFilterType(pill.id)}
+                  sx={{ fontWeight: 600, fontSize: '0.75rem' }}
+                />
+              ))}
+            </Box>
+
+            <TextField
+              size="small"
+              placeholder="Search documents or files..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{ width: { xs: '100%', sm: 260 } }}
+            />
+          </Box>
+
+          {/* Documents Table */}
+          <TableContainer component={Paper} elevation={0} variant="outlined" sx={{ borderRadius: 1.5 }}>
+            <Table size="small">
+              <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700, width: 70 }}>Doc ID</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 130 }}>Type</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Document Title &amp; Target File</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>File Name &amp; Size</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 60 }}>Pages</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 130 }}>Engine</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Date Issued</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 80 }}>Status</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, width: 140 }}>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
+                      <CircularProgress size={28} />
+                      <Typography variant="body2" sx={{ mt: 1, color: '#64748b' }}>Loading documents from storage...</Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : filteredDocs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} sx={{ textAlign: 'center', py: 5, color: '#94a3b8' }}>
+                      <Printer size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                      <Typography variant="body2" fontWeight={600} color="textSecondary">
+                        No documents found {entityNbr ? `for ${entityNbr}` : ''}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Click &quot;Generate Document&quot; above to create a Policy Dec Page, Quote Proposal, or Binder Letter using Aspose.PDF.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredDocs.map((doc) => (
+                    <TableRow key={doc.documentId} hover>
+                      <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
+                        #{doc.documentId}
+                      </TableCell>
+                      <TableCell>
+                        {renderDocTypeChip(doc.docType)}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#1e293b' }}>
+                          {doc.docTitle}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                          {doc.entityType}: <strong>{doc.entityNbr || `ID #${doc.entityId}`}</strong>
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <code style={{ fontSize: '0.75rem', color: '#0f172a' }}>{doc.fileName}</code>
+                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                          {formatFileSize(doc.fileSizeBytes)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>
+                        {doc.pageCount || 1}
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label="Aspose.PDF 24.12"
+                          size="small"
+                          variant="outlined"
+                          sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#f1f5f9', fontWeight: 600 }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.8rem', color: '#475569' }}>
+                        {doc.createdDt ? String(doc.createdDt).substring(0, 16) : 'Just now'}
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={doc.status || 'ISSUED'}
+                          size="small"
+                          sx={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            bgcolor: '#dcfce7',
+                            color: '#15803d',
+                            height: 22
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Eye size={13} />}
+                            onClick={() => setPreviewDoc(doc)}
+                            sx={{ minWidth: 70, py: 0.4 }}
+                          >
+                            View
+                          </Button>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            title="Download PDF"
+                            onClick={() => {
+                              window.open(`/document-api/documents/${doc.documentId}/download?tenantId=${activeTenantId}`, '_blank');
+                            }}
+                          >
+                            <Download size={15} />
+                          </IconButton>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+      </Card>
+
+      {/* GENERATE DOCUMENT MODAL DIALOG */}
+      <Dialog
+        open={openGenerateModal}
+        onClose={() => !generating && setOpenGenerateModal(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Printer size={20} style={{ color: '#059669' }} />
+          Generate Insurance Document (Aspose.PDF Engine)
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          {/* Engine Banner */}
+          <Alert severity="info" sx={{ mb: 2.5, fontSize: '0.82rem' }}>
+            Powered by <strong>Aspose.PDF for Java v24.12</strong> (Evaluation Engine). Generates dynamic high-fidelity corporate documents with native typography, table grids, calculations, and regulatory jackets.
+          </Alert>
+
+          {/* Autofill from Quote (if quotes available) */}
+          {(quotes || []).length > 0 && (
+            <Card elevation={0} sx={{ mb: 2.5, bgcolor: '#f8fafc', border: '1px dashed #cbd5e1' }}>
+              <CardContent sx={{ py: 1.5, px: 2 }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#334155', display: 'block', mb: 1 }}>
+                  Optional: Autofill Parameters from Existing Approved Quote
+                </Typography>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid size={{ xs: 12, sm: 8 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Select Existing Quote</InputLabel>
+                      <Select
+                        label="Select Existing Quote"
+                        value={genForm.selectedQuoteId}
+                        onChange={(e) => handleSelectQuoteForGen(e.target.value)}
+                      >
+                        <MenuItem value="">-- Manual Document Parameters --</MenuItem>
+                        {(quotes || []).map((q) => (
+                          <MenuItem key={q.quoteId} value={q.quoteId}>
+                            {q.quoteId} — {q.productCode || 'TECH_EO'} | State: {q.stateCode || 'CA'} | Premium: {q.premium}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <Typography variant="caption" color="textSecondary">
+                      Selecting a quote automatically configures a Quote Proposal with SERFF filing breakdown.
+                    </Typography>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          )}
+
+          <Grid container spacing={2}>
+            {/* Document Type */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Document Type</InputLabel>
+                <Select
+                  label="Document Type"
+                  value={genForm.docType}
+                  onChange={(e) => setGenForm({ ...genForm, docType: e.target.value })}
+                >
+                  <MenuItem value="DEC_PAGE">Policy Declarations Schedule (DEC_PAGE)</MenuItem>
+                  <MenuItem value="QUOTE_PROPOSAL">Underwriting Quote Proposal (QUOTE_PROPOSAL)</MenuItem>
+                  <MenuItem value="BINDER_LETTER">Insurance Coverage Binder Confirmation (BINDER_LETTER)</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            {/* Target File / Entity Reference */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Target File / Policy / Submission Number"
+                value={genForm.entityNbr}
+                onChange={(e) => setGenForm({ ...genForm, entityNbr: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Insured Name */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Insured Organization / Name"
+                value={genForm.insuredName}
+                onChange={(e) => setGenForm({ ...genForm, insuredName: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Product Type */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Product Line / Coverage"
+                value={genForm.productType}
+                onChange={(e) => setGenForm({ ...genForm, productType: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Occurrence Limit */}
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Occurrence / Aggregate Limit ($)"
+                type="number"
+                value={genForm.coverageLimit}
+                onChange={(e) => setGenForm({ ...genForm, coverageLimit: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Deductible / Retention */}
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Retention / Deductible ($)"
+                type="number"
+                value={genForm.deductible}
+                onChange={(e) => setGenForm({ ...genForm, deductible: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Annual Premium */}
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Annual Premium ($)"
+                type="number"
+                value={genForm.annualPremium}
+                onChange={(e) => setGenForm({ ...genForm, annualPremium: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Effective Date */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Effective Date"
+                type="date"
+                InputLabelProps={{ shrink: true }}
+                value={genForm.effectiveDate}
+                onChange={(e) => setGenForm({ ...genForm, effectiveDate: e.target.value })}
+                required
+              />
+            </Grid>
+
+            {/* Expiration Date */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Expiration Date"
+                type="date"
+                InputLabelProps={{ shrink: true }}
+                value={genForm.expirationDate}
+                onChange={(e) => setGenForm({ ...genForm, expirationDate: e.target.value })}
+                required
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid #e2e8f0' }}>
+          <Button onClick={() => setOpenGenerateModal(false)} disabled={generating}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleGenerate}
+            disabled={generating || !genForm.entityNbr || !genForm.insuredName}
+            startIcon={generating ? <CircularProgress size={16} color="inherit" /> : <Printer size={16} />}
+            sx={{ fontWeight: 600 }}
+          >
+            {generating ? 'Generating PDF with Aspose...' : 'Generate & Issue PDF'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* PDF PREVIEW MODAL DIALOG */}
+      <Dialog
+        open={Boolean(previewDoc)}
+        onClose={() => setPreviewDoc(null)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <FileText size={20} style={{ color: '#059669' }} />
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {previewDoc?.docTitle || 'Document Preview'}
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                File: <code>{previewDoc?.fileName}</code> • Size: {formatFileSize(previewDoc?.fileSizeBytes)} • Engine: Aspose.PDF
+              </Typography>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<ExternalLink size={14} />}
+              onClick={() => {
+                window.open(`/document-api/documents/${previewDoc?.documentId}/preview?tenantId=${activeTenantId}`, '_blank');
+              }}
+            >
+              Open in Tab
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<Download size={14} />}
+              onClick={() => {
+                window.open(`/document-api/documents/${previewDoc?.documentId}/download?tenantId=${activeTenantId}`, '_blank');
+              }}
+            >
+              Download PDF
+            </Button>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: 0, bgcolor: '#334155' }}>
+          {previewDoc && (
+            <Box sx={{ width: '100%', height: '700px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <iframe
+                src={`/document-api/documents/${previewDoc.documentId}/preview?tenantId=${activeTenantId}#toolbar=1`}
+                title={previewDoc.docTitle}
+                width="100%"
+                height="100%"
+                style={{ border: 'none' }}
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+          <Button onClick={() => setPreviewDoc(null)} variant="outlined">
+            Close Preview
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+// ============================================================================
+// TOP-LEVEL DOCUMENTS & FORMS VIEW
+// ============================================================================
+const DocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
+  return (
+    <Box>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4, fontWeight: 700 }}>
+          Documents &amp; Policy Forms
+        </Typography>
+        <Typography variant="body2" sx={{ color: '#64748b' }}>
+          Official policy declarations schedules, quote proposals, and binder letters generated with Aspose.PDF Engine
+        </Typography>
+      </Box>
+
+      <DocumentsManager
+        apiFetch={apiFetch}
+        activeTenantId={activeTenantId}
+        entityType={null}
+        entityId={null}
+        entityNbr=""
+        defaultInsuredName=""
+        title="Enterprise Document Repository"
+      />
+    </Box>
+  );
+};
+
 // --- 5. Claims View ---
 const ClaimsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [claims, setClaims] = useState([]);
@@ -3803,24 +4564,25 @@ export default function App() {
     { id: 'policy', label: 'Policies', icon: <FileText size={18} /> },
     { id: 'submissions', label: 'Submissions', icon: <Files size={18} /> },
     { id: 'quotes', label: 'Quotes & Rating', icon: <Calculator size={18} /> },
+    { id: 'documents', label: 'Documents & Forms', icon: <Printer size={18} /> },
     { id: 'claims', label: 'Claims', icon: <AlertCircle size={18} /> }
   ];
 
   const tenantModuleSet = new Set(
-    (currentTenant?.enabledModules || 'dashboard,policy,submissions,claims')
+    (currentTenant?.enabledModules || 'dashboard,policy,submissions,claims,documents')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
   );
   const roleModuleSet = new Set(
-    (activeRole?.allowedModules || 'dashboard,policy,submissions,claims')
+    (activeRole?.allowedModules || 'dashboard,policy,submissions,claims,documents')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
   );
 
   const navItems = allNavItems.filter(
-    (item) => item.id === 'dashboard' || item.id === 'quotes' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
+    (item) => item.id === 'dashboard' || item.id === 'quotes' || item.id === 'documents' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
   );
 
   useEffect(() => {
@@ -3847,6 +4609,8 @@ export default function App() {
         return <SubmissionsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
       case 'quotes':
         return <QuotesView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
+      case 'documents':
+        return <DocumentsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
       case 'claims':
         return <ClaimsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} />;
       default:
