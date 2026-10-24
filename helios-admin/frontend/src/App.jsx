@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -254,6 +254,7 @@ export default function App() {
   const [diagRefreshing, setDiagRefreshing] = useState(false);
   const [autoRefreshDiag, setAutoRefreshDiag] = useState(false);
   const [registeredServices, setRegisteredServices] = useState([]);
+  const registeredServicesRef = useRef([]);
   const [servicesDiag, setServicesDiag] = useState({});
   const [flash, setFlash] = useState(null);
 
@@ -657,19 +658,23 @@ export default function App() {
 
     try {
       // 1. Dynamically load active service registry from MSTR_DATA DB
-      let services = [];
+      let services = registeredServicesRef.current;
       try {
         const svcList = await apiFetch('/api/services');
         if (Array.isArray(svcList) && svcList.length > 0) {
           services = svcList;
-          setRegisteredServices(svcList);
+          const svcJson = JSON.stringify(svcList);
+          if (JSON.stringify(registeredServicesRef.current) !== svcJson) {
+            registeredServicesRef.current = svcList;
+            setRegisteredServices(svcList);
+          }
         }
       } catch (err) {
         console.warn('Failed to load services from MSTR_DATA, using existing state:', err);
       }
 
-      if (services.length === 0) {
-        services = registeredServices;
+      if (!services || services.length === 0) {
+        return;
       }
 
       // 2. Dynamically ping each registered service route
@@ -700,7 +705,7 @@ export default function App() {
     } finally {
       setDiagRefreshing(false);
     }
-  }, [apiFetch, selectedTenantId, registeredServices]);
+  }, [apiFetch, selectedTenantId]);
 
   useEffect(() => {
     if (!autoRefreshDiag) return;
@@ -714,9 +719,9 @@ export default function App() {
     loadTenants();
     loadRoles();
     loadUsers();
-    loadDiagnostics();
     loadRatingData();
-  }, [loadTenants, loadRoles, loadUsers, loadDiagnostics, loadRatingData]);
+    loadDiagnostics();
+  }, [selectedTenantId]);
 
   const handleOpenEditTenant = (t) => {
     setTenantForm({

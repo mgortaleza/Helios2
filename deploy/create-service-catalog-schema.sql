@@ -40,3 +40,4 @@ BEGIN
     PRINT 'Created and seeded dbo.MSTR_SERVICE_CATALOG in MSTR_DATA';
 END
 GO
+
