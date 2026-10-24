@@ -70,8 +70,11 @@ import {
   Zap,
   AlertCircle,
   Layers,
-  Clock
+  Clock,
+  GitFork
 } from 'lucide-react';
+
+import RuleFlowStudio from './RuleFlowStudio';
 
 const adminTheme = createTheme({
   palette: {
@@ -700,6 +703,7 @@ export default function App() {
     { id: 'roles', label: 'Role & RBAC Manager', icon: <ShieldCheck size={18} /> },
     { id: 'users', label: 'User & Identity Manager', icon: <Users size={18} /> },
     { id: 'rating', label: 'Rating & State Filings', icon: <Calculator size={18} /> },
+    { id: 'ruleflow', label: 'RuleFlow Studio & BRMS', icon: <GitFork size={18} /> },
     { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
   ];
 
@@ -2149,6 +2153,11 @@ export default function App() {
                     </CardContent>
                   </Card>
                 </Box>
+              )}
+
+              {/* TAB 5: BRMS RULEFLOW STUDIO & VISUALIZER */}
+              {activeTab === 'ruleflow' && (
+                <RuleFlowStudio apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}
 
             </Box>
