@@ -29,7 +29,17 @@ public class DecisionTableEngine {
     private static final Pattern OPERATOR_PATTERN = Pattern.compile("^(>=|<=|>|<|==|!=)\\s*(.+)$");
 
     public enum HitPolicy { FIRST_HIT, ALL_HITS, COLLECT_MIN, COLLECT_MAX }
-    public enum ColumnType { CONDITION, ACTION }
+    public enum ColumnType {
+        CONDITION, ACTION, INPUT, OUTPUT;
+
+        public boolean isCondition() {
+            return this == CONDITION || this == INPUT;
+        }
+
+        public boolean isAction() {
+            return this == ACTION || this == OUTPUT;
+        }
+    }
 
     public record TableColumn(long columnId, ColumnType type, String attributeKey, String dataType, int order) {}
     public record TableCell(long rowId, long columnId, String rawExpression) {}
@@ -72,12 +82,12 @@ public class DecisionTableEngine {
         Map<String, Object> pendingOutputs = new HashMap<>();
 
         List<TableColumn> conditionCols = model.columns().stream()
-                .filter(c -> c.type() == ColumnType.CONDITION)
+                .filter(c -> c.type().isCondition())
                 .sorted(Comparator.comparingInt(TableColumn::order))
                 .toList();
 
         List<TableColumn> actionCols = model.columns().stream()
-                .filter(c -> c.type() == ColumnType.ACTION)
+                .filter(c -> c.type().isAction())
                 .sorted(Comparator.comparingInt(TableColumn::order))
                 .toList();
 
@@ -256,3 +266,4 @@ public class DecisionTableEngine {
         return val;
     }
 }
+

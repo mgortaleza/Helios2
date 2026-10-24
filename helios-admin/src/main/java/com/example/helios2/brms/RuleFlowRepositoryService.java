@@ -7,8 +7,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
 
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.*;
 
 /**
@@ -36,6 +40,8 @@ public class RuleFlowRepositoryService {
             String flowCode,
             String flowName,
             String description,
+            String productCode,
+            String planCode,
             int version,
             String status,
             String updatedDt
@@ -49,29 +55,39 @@ public class RuleFlowRepositoryService {
             List<Map<String, Object>> decisionTables
     ) {}
 
-    public List<FlowHeaderDto> getFlowsForTenant(int tenantId) {
-        String sql = """
-                SELECT FlowId, TenantId, FlowCode, FlowName, Description, Version, Status,
+    public List<FlowHeaderDto> getFlowsForTenant(int tenantId, String productCode) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT FlowId, TenantId, FlowCode, FlowName, Description, ProductCode, PlanCode, Version, Status,
                        CONVERT(VARCHAR(30), UpdatedDt, 120) AS UpdatedDt
                 FROM dbo.RuleFlows
                 WHERE TenantId = ?
-                ORDER BY FlowId ASC
-                """;
-        return masterJdbcTemplate.query(sql, (rs, i) -> new FlowHeaderDto(
+                """);
+        List<Object> params = new ArrayList<>();
+        params.add(tenantId);
+
+        if (productCode != null && !productCode.isBlank()) {
+            sql.append(" AND ProductCode = ?");
+            params.add(productCode);
+        }
+        sql.append(" ORDER BY FlowId ASC");
+
+        return masterJdbcTemplate.query(sql.toString(), (rs, i) -> new FlowHeaderDto(
                 rs.getLong("FlowId"),
                 rs.getInt("TenantId"),
                 rs.getString("FlowCode"),
                 rs.getString("FlowName"),
                 rs.getString("Description"),
+                rs.getString("ProductCode"),
+                rs.getString("PlanCode"),
                 rs.getInt("Version"),
                 rs.getString("Status"),
                 rs.getString("UpdatedDt")
-        ), tenantId);
+        ), params.toArray());
     }
 
     public Optional<FlowFullDto> getFullFlow(long flowId) {
         String flowSql = """
-                SELECT FlowId, TenantId, FlowCode, FlowName, Description, Version, Status,
+                SELECT FlowId, TenantId, FlowCode, FlowName, Description, ProductCode, PlanCode, Version, Status,
                        CONVERT(VARCHAR(30), UpdatedDt, 120) AS UpdatedDt
                 FROM dbo.RuleFlows
                 WHERE FlowId = ?
@@ -82,6 +98,8 @@ public class RuleFlowRepositoryService {
                 rs.getString("FlowCode"),
                 rs.getString("FlowName"),
                 rs.getString("Description"),
+                rs.getString("ProductCode"),
+                rs.getString("PlanCode"),
                 rs.getInt("Version"),
                 rs.getString("Status"),
                 rs.getString("UpdatedDt")
@@ -194,6 +212,68 @@ public class RuleFlowRepositoryService {
         }
 
         return Optional.of(new FlowFullDto(header, layoutJson, nodes, edges, tables));
+    }
+
+    public FlowHeaderDto createRuleFlow(
+            int tenantId,
+            String flowCode,
+            String flowName,
+            String description,
+            String productCode,
+            String planCode,
+            String templateType
+    ) {
+        String insertFlowSql = """
+                INSERT INTO dbo.RuleFlows (TenantId, FlowCode, FlowName, Description, ProductCode, PlanCode, Version, Status)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'DRAFT');
+                """;
+
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        masterJdbcTemplate.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(insertFlowSql, Statement.RETURN_GENERATED_KEYS);
+            ps.setInt(1, tenantId);
+            ps.setString(2, flowCode.toUpperCase().trim());
+            ps.setString(3, flowName.trim());
+            ps.setString(4, description != null ? description.trim() : "");
+            ps.setString(5, productCode != null && !productCode.isBlank() ? productCode.trim() : null);
+            ps.setString(6, planCode != null && !planCode.isBlank() ? planCode.trim() : null);
+            return ps;
+        }, keyHolder);
+
+        long newFlowId = Objects.requireNonNull(keyHolder.getKey()).longValue();
+
+        // Seed initial Entry Node
+        String insertNodeSql = """
+                INSERT INTO dbo.RuleNodes (FlowId, ClientNodeKey, NodeType, NodeName, IsEntryNode, IsTerminalNode, PayloadScript)
+                VALUES (?, 'node-1', 'RULESET', '1. Initialize Facts', 1, 0, 'facts.initialized = true;');
+                """;
+        masterJdbcTemplate.update(insertNodeSql, newFlowId);
+
+        // Seed initial default layout
+        String starterLayout = String.format("""
+                {"nodes":[{"id":"node-1","type":"ruleset","position":{"x":100,"y":200},"data":{"label":"1. Initialize Facts","nodeType":"RULESET"}}],"edges":[]}
+                """);
+        saveCanvasLayout(newFlowId, starterLayout, 1.0, 0.0, 0.0);
+
+        log.info("Created new RuleFlow {} (FlowId: {}) for Tenant {}, Product: {}, Plan: {}",
+                flowCode, newFlowId, tenantId, productCode, planCode);
+
+        return new FlowHeaderDto(newFlowId, tenantId, flowCode, flowName, description, productCode, planCode, 1, "DRAFT", "Just now");
+    }
+
+    public void updateRuleFlowHeader(long flowId, String flowName, String description, String productCode, String planCode, String status) {
+        String sql = """
+                UPDATE dbo.RuleFlows
+                SET FlowName = COALESCE(?, FlowName),
+                    Description = COALESCE(?, Description),
+                    ProductCode = ?,
+                    PlanCode = ?,
+                    Status = COALESCE(?, Status),
+                    UpdatedDt = SYSDATETIMEOFFSET()
+                WHERE FlowId = ?
+                """;
+        masterJdbcTemplate.update(sql, flowName, description, productCode, planCode, status, flowId);
+        log.info("Updated RuleFlow header for FlowId: {}", flowId);
     }
 
     public void saveCanvasLayout(long flowId, String layoutJson, double zoom, double x, double y) {

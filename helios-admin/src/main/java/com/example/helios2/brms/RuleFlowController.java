@@ -30,9 +30,63 @@ public class RuleFlowController {
 
     @GetMapping("/flows")
     public ResponseEntity<List<RuleFlowRepositoryService.FlowHeaderDto>> listFlows(
-            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam,
+            @RequestParam(name = "productCode", required = false) String productCode) {
         int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
-        return ResponseEntity.ok(repositoryService.getFlowsForTenant(tenantId));
+        return ResponseEntity.ok(repositoryService.getFlowsForTenant(tenantId, productCode));
+    }
+
+    public record CreateFlowRequest(
+            String flowCode,
+            String flowName,
+            String description,
+            String productCode,
+            String planCode,
+            String templateType,
+            Integer tenantId
+    ) {}
+
+    @PostMapping("/flows")
+    public ResponseEntity<RuleFlowRepositoryService.FlowHeaderDto> createFlow(
+            @RequestBody CreateFlowRequest req,
+            @RequestHeader(name = "X-Tenant-ID", required = false) Integer headerTenantId) {
+        int tenantId = (req.tenantId() != null && req.tenantId() > 0)
+                ? req.tenantId()
+                : ((headerTenantId != null && headerTenantId > 0) ? headerTenantId : TenantContext.getTenantId());
+
+        var created = repositoryService.createRuleFlow(
+                tenantId,
+                req.flowCode(),
+                req.flowName(),
+                req.description(),
+                req.productCode(),
+                req.planCode(),
+                req.templateType()
+        );
+        return ResponseEntity.ok(created);
+    }
+
+    public record UpdateFlowHeaderRequest(
+            String flowName,
+            String description,
+            String productCode,
+            String planCode,
+            String status
+    ) {}
+
+    @PutMapping("/flows/{id}")
+    public ResponseEntity<?> updateFlowHeader(
+            @PathVariable("id") long flowId,
+            @RequestBody UpdateFlowHeaderRequest req) {
+        repositoryService.updateRuleFlowHeader(
+                flowId,
+                req.flowName(),
+                req.description(),
+                req.productCode(),
+                req.planCode(),
+                req.status()
+        );
+        return ResponseEntity.ok(Map.of("success", true, "flowId", flowId));
     }
 
     @GetMapping("/flows/{id}")
@@ -118,31 +172,37 @@ public class RuleFlowController {
                     List<Map<String, Object>> rawCells = (List<Map<String, Object>>) t.get("cells");
 
                     List<DecisionTableEngine.TableColumn> cols = new ArrayList<>();
-                    for (Map<String, Object> rc : rawCols) {
-                        cols.add(new DecisionTableEngine.TableColumn(
-                                ((Number) rc.get("ColumnId")).longValue(),
-                                DecisionTableEngine.ColumnType.valueOf((String) rc.get("ColumnType")),
-                                (String) rc.get("AttributeKey"),
-                                (String) rc.get("DataType"),
-                                ((Number) rc.get("DisplayOrder")).intValue()
-                        ));
+                    if (rawCols != null) {
+                        for (Map<String, Object> rc : rawCols) {
+                            cols.add(new DecisionTableEngine.TableColumn(
+                                    ((Number) rc.get("ColumnId")).longValue(),
+                                    DecisionTableEngine.ColumnType.valueOf((String) rc.get("ColumnType")),
+                                    (String) rc.get("AttributeKey"),
+                                    (String) rc.get("DataType"),
+                                    ((Number) rc.get("DisplayOrder")).intValue()
+                            ));
+                        }
                     }
 
                     List<DecisionTableEngine.TableRow> rows = new ArrayList<>();
-                    for (Map<String, Object> rr : rawRows) {
-                        rows.add(new DecisionTableEngine.TableRow(
-                                ((Number) rr.get("RowId")).longValue(),
-                                ((Number) rr.get("RowIndex")).intValue(),
-                                (String) rr.get("RuleDescription")
-                        ));
+                    if (rawRows != null) {
+                        for (Map<String, Object> rr : rawRows) {
+                            rows.add(new DecisionTableEngine.TableRow(
+                                    ((Number) rr.get("RowId")).longValue(),
+                                    ((Number) rr.get("RowIndex")).intValue(),
+                                    (String) rr.get("RuleDescription")
+                            ));
+                        }
                     }
 
                     Map<String, DecisionTableEngine.TableCell> cellsByCoord = new HashMap<>();
-                    for (Map<String, Object> rcell : rawCells) {
-                        long rId = ((Number) rcell.get("RowId")).longValue();
-                        long cId = ((Number) rcell.get("ColumnId")).longValue();
-                        String expr = (String) rcell.get("ExpressionValue");
-                        cellsByCoord.put(rId + "_" + cId, new DecisionTableEngine.TableCell(rId, cId, expr));
+                    if (rawCells != null) {
+                        for (Map<String, Object> rcell : rawCells) {
+                            long rId = ((Number) rcell.get("RowId")).longValue();
+                            long cId = ((Number) rcell.get("ColumnId")).longValue();
+                            String expr = (String) rcell.get("ExpressionValue");
+                            cellsByCoord.put(rId + "_" + cId, new DecisionTableEngine.TableCell(rId, cId, expr));
+                        }
                     }
 
                     dtModel = new DecisionTableEngine.TableModel(tableId, code, hitPolicy, aggField, cols, rows, cellsByCoord);
@@ -182,5 +242,39 @@ public class RuleFlowController {
         repositoryService.recordExecutionAudit(flowId, tenantId, result, req.inputFacts());
 
         return ResponseEntity.ok(result);
+    }
+
+    public record ExecuteByPlanRequest(
+            String productCode,
+            String planCode,
+            Map<String, Object> inputFacts,
+            Integer tenantId
+    ) {}
+
+    @PostMapping("/execute-by-plan")
+    public ResponseEntity<RuleFlowExecutor.ExecutionResult> executeByPlan(
+            @RequestBody ExecuteByPlanRequest req,
+            @RequestHeader(name = "X-Tenant-ID", required = false) Integer headerTenantId) {
+        int tenantId = (req.tenantId() != null && req.tenantId() > 0)
+                ? req.tenantId()
+                : ((headerTenantId != null && headerTenantId > 0) ? headerTenantId : TenantContext.getTenantId());
+
+        List<RuleFlowRepositoryService.FlowHeaderDto> candidateFlows =
+                repositoryService.getFlowsForTenant(tenantId, req.productCode());
+
+        Optional<RuleFlowRepositoryService.FlowHeaderDto> match = candidateFlows.stream()
+                .filter(f -> "ACTIVE".equalsIgnoreCase(f.status()))
+                .filter(f -> req.planCode() == null || req.planCode().isBlank() || req.planCode().equalsIgnoreCase(f.planCode()))
+                .findFirst();
+
+        if (match.isEmpty()) {
+            match = candidateFlows.stream().filter(f -> "ACTIVE".equalsIgnoreCase(f.status())).findFirst();
+        }
+
+        if (match.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return executeFlow(match.get().flowId(), new ExecuteFlowRequest(req.inputFacts()), tenantId);
     }
 }

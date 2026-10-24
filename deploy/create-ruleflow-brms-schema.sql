@@ -15,6 +15,8 @@ BEGIN
         FlowCode VARCHAR(64) NOT NULL,
         FlowName NVARCHAR(128) NOT NULL,
         Description NVARCHAR(512) NULL,
+        ProductCode VARCHAR(50) NULL,
+        PlanCode VARCHAR(50) NULL,
         Version INT NOT NULL DEFAULT 1,
         Status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
         CreatedBy VARCHAR(64) NOT NULL DEFAULT 'SYSTEM',
@@ -28,6 +30,10 @@ BEGIN
     CREATE NONCLUSTERED INDEX IX_RuleFlows_Lookup 
         ON dbo.RuleFlows (TenantId, FlowCode, Status) 
         INCLUDE (FlowId, Version);
+
+    CREATE NONCLUSTERED INDEX IX_RuleFlows_Product_Plan 
+        ON dbo.RuleFlows (TenantId, ProductCode, PlanCode, Status) 
+        INCLUDE (FlowId, FlowCode, Version);
     PRINT 'Created dbo.RuleFlows';
 END;
 GO
@@ -224,3 +230,4 @@ BEGIN
     PRINT 'Created dbo.RuleFlowExecutionAudits';
 END;
 GO
+

@@ -87,6 +87,7 @@ public class RuleFlowExecutor {
         List<ExecutionAuditStep> auditTrail = new ArrayList<>();
 
         Map<String, Object> workingMemory = deepCopyAndNormalize(inputFacts != null ? inputFacts : Collections.emptyMap());
+        workingMemory.put("facts", workingMemory);
 
         ExecutionNode currentNode = nodes.values().stream()
                 .filter(ExecutionNode::isEntry)
@@ -94,7 +95,8 @@ public class RuleFlowExecutor {
                 .orElse(null);
 
         if (currentNode == null) {
-            return new ExecutionResult(correlationId, false, "Execution failed: No root entry node found.", workingMemory, auditTrail, 0);
+            Map<String, Object> returnFacts = shallowCopy(workingMemory);
+            return new ExecutionResult(correlationId, false, "Execution failed: No root entry node found.", returnFacts, auditTrail, 0);
         }
 
         int stepCounter = 0;
@@ -165,12 +167,14 @@ public class RuleFlowExecutor {
             log.info("[{}] RuleFlow {} execution finished in {} ms over {} steps.",
                     correlationId, flowId, totalDuration, stepCounter);
 
-            return new ExecutionResult(correlationId, true, null, workingMemory, auditTrail, totalDuration);
+            Map<String, Object> returnFacts = shallowCopy(workingMemory);
+            return new ExecutionResult(correlationId, true, null, returnFacts, auditTrail, totalDuration);
 
         } catch (Exception ex) {
             log.error("[{}] Execution failure at step {}: {}", correlationId, stepCounter, ex.getMessage(), ex);
             long totalDuration = System.currentTimeMillis() - startTime;
-            return new ExecutionResult(correlationId, false, ex.getMessage(), workingMemory, auditTrail, totalDuration);
+            Map<String, Object> returnFacts = shallowCopy(workingMemory);
+            return new ExecutionResult(correlationId, false, ex.getMessage(), returnFacts, auditTrail, totalDuration);
         }
     }
 
@@ -195,6 +199,7 @@ public class RuleFlowExecutor {
 
             if (edge.routingCondition() != null && !edge.routingCondition().trim().isEmpty()) {
                 try {
+                    workingMemory.put("facts", workingMemory);
                     Serializable compiled = MVEL.compileExpression(edge.routingCondition());
                     Object res = MVEL.executeExpression(compiled, workingMemory);
                     if (Boolean.TRUE.equals(res)) {
@@ -224,6 +229,7 @@ public class RuleFlowExecutor {
 
     private void executeRulesetScript(String script, Map<String, Object> context) {
         if (script == null || script.trim().isEmpty()) return;
+        context.put("facts", context);
         Serializable compiled = MVEL.compileExpression(script);
         MVEL.executeExpression(compiled, context);
     }
@@ -236,6 +242,7 @@ public class RuleFlowExecutor {
                 context.put(k, new BigDecimal(v.toString()));
             }
         });
+        context.put("facts", context);
 
         Serializable compiled = MVEL.compileExpression(expression);
         Object outcome = MVEL.executeExpression(compiled, context);
@@ -248,7 +255,9 @@ public class RuleFlowExecutor {
     }
 
     private Map<String, Object> shallowCopy(Map<String, Object> src) {
-        return new LinkedHashMap<>(src);
+        Map<String, Object> copy = new LinkedHashMap<>(src);
+        copy.remove("facts");
+        return copy;
     }
 
     @SuppressWarnings("unchecked")
@@ -277,3 +286,4 @@ public class RuleFlowExecutor {
         }
     }
 }
+

@@ -73,7 +73,10 @@ import {
   Eye,
   ExternalLink,
   FileSpreadsheet,
-  FileCheck
+  FileCheck,
+  GitFork,
+  Workflow,
+  Zap
 } from 'lucide-react';
 
 // --- Dynamic Per-Tenant Theme Builder ---
@@ -1559,6 +1562,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                   onChange={(e) => setRatingForm({ ...ratingForm, productCode: e.target.value })}
                 >
                   <MenuItem value="TECH_EO">Technology E&amp;O</MenuItem>
+                  <MenuItem value="COMMERCIAL_AUTO">Commercial Automobile &amp; Fleet</MenuItem>
                   <MenuItem value="MED_MAL">Medical Malpractice</MenuItem>
                   <MenuItem value="DNO">Directors &amp; Officers</MenuItem>
                 </Select>
@@ -1757,6 +1761,10 @@ const RatingQuoteDialog = ({
   onQuoteSaved
 }) => {
   const [selectedSubId, setSelectedSubId] = useState('');
+  const [availableFlows, setAvailableFlows] = useState([]);
+  const [selectedFlowId, setSelectedFlowId] = useState('');
+  const [ratingEngineMode, setRatingEngineMode] = useState('BRMS'); // 'BRMS' | 'SERFF'
+  const [isLoadingFlows, setIsLoadingFlows] = useState(false);
   const [ratingForm, setRatingForm] = useState({
     productCode: 'TECH_EO',
     stateCode: 'CA',
@@ -1789,10 +1797,11 @@ const RatingQuoteDialog = ({
       let pCode = 'TECH_EO';
       if (submission.productType?.toLowerCase().includes('med')) pCode = 'MED_MAL';
       if (submission.productType?.toLowerCase().includes('direct') || submission.productType?.toLowerCase().includes('d&o')) pCode = 'DNO';
+      if (submission.productType?.toLowerCase().includes('auto') || submission.productType?.toLowerCase().includes('fleet')) pCode = 'COMMERCIAL_AUTO';
       setRatingForm((prev) => ({
         ...prev,
         productCode: pCode,
-        classCode: pCode === 'MED_MAL' ? 'PHYS_SURGERY' : (pCode === 'DNO' ? 'CORP_PRIVATE' : 'TECH_SAAS'),
+        classCode: pCode === 'COMMERCIAL_AUTO' ? 'FLEET_COMMERCIAL' : (pCode === 'MED_MAL' ? 'PHYS_SURGERY' : (pCode === 'DNO' ? 'CORP_PRIVATE' : 'TECH_SAAS')),
         underwriter: submission.fileLevelInfo?.underwriter || 'Michael Chang',
         effectiveDate: submission.fileLevelInfo?.effectiveDate || new Date().toISOString().slice(0, 10)
       }));
@@ -1802,6 +1811,42 @@ const RatingQuoteDialog = ({
     setRateResult(null);
     setError(null);
   }, [open, submission?.submsnId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const fetchFlows = async () => {
+      setIsLoadingFlows(true);
+      try {
+        const res = await fetch(`/api/brms/flows?tenantId=${activeTenantId || 1}`);
+        if (res.ok) {
+          const list = await res.json();
+          setAvailableFlows(Array.isArray(list) ? list : []);
+        }
+      } catch (err) {
+        console.warn('Failed to load BRMS flows:', err);
+      } finally {
+        setIsLoadingFlows(false);
+      }
+    };
+    fetchFlows();
+  }, [open, activeTenantId]);
+
+  useEffect(() => {
+    if (!availableFlows || availableFlows.length === 0) {
+      setSelectedFlowId('');
+      return;
+    }
+    // Prefer matching productCode & ACTIVE
+    const matching = availableFlows.find((f) => f.status === 'ACTIVE' && f.productCode === ratingForm.productCode);
+    if (matching) {
+      setSelectedFlowId(String(matching.flowId));
+    } else {
+      const anyActive = availableFlows.find((f) => f.status === 'ACTIVE');
+      if (anyActive) {
+        setSelectedFlowId(String(anyActive.flowId));
+      }
+    }
+  }, [ratingForm.productCode, availableFlows]);
 
   const activeSub = submission || (submissions || []).find((s) => s.submsnId === Number(selectedSubId));
 
@@ -1814,6 +1859,107 @@ const RatingQuoteDialog = ({
     const retention = parseNum(ratingForm.retentionAmount, 50000);
     const schedMod = parseNum(ratingForm.scheduleMod, 0.90);
 
+    // 1. If BRMS Mode is enabled and a flow is selected, execute through BRMS engine
+    if (ratingEngineMode === 'BRMS' && selectedFlowId) {
+      const chosenFlow = availableFlows.find((f) => String(f.flowId) === String(selectedFlowId));
+      const brmsFacts = {
+        tenantId: Number(activeTenantId) || 1,
+        productCode: ratingForm.productCode,
+        planCode: chosenFlow?.planCode || `${ratingForm.productCode}_COMMERCIAL`,
+        stateCode: ratingForm.stateCode,
+        exposureValue: exposure,
+        exposureUnits: exposure / 1000,
+        occurrenceLimit: occLimit,
+        aggregateLimit: aggLimit,
+        retentionAmount: retention,
+        scheduleMod: schedMod,
+        classCode: ratingForm.classCode,
+        territoryCode: ratingForm.territoryCode,
+        fleetSize: 15,
+        driversUnder25: 1,
+        priorAccidents: 0,
+        lossRatio: 0.25,
+        telematicsScore: 88,
+        cyberScore: 85,
+        priorLossesCount: 0,
+        effectiveDate: ratingForm.effectiveDate
+      };
+
+      try {
+        const res = await fetch(`/api/brms/flows/${selectedFlowId}/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Tenant-ID': String(activeTenantId || 1)
+          },
+          body: JSON.stringify({ inputFacts: brmsFacts })
+        });
+
+        if (res.ok) {
+          const brmsData = await res.json();
+          if (brmsData.success) {
+            const ff = brmsData.finalFacts || {};
+            const finalPrem = ff.finalAnnualPremium !== undefined
+              ? Number(ff.finalAnnualPremium)
+              : (ff.preliminaryPremium || ff.basePremium || 2500);
+            const rawStatus = ff.ratingStatus || ff.status || 'RATED';
+            const ratingStatus = (rawStatus.includes('REFERRAL') || rawStatus.includes('REVIEW')) ? 'REFERRAL' : 'RATED';
+            const attachedForms = ff.attachedForm
+              ? [ff.attachedForm]
+              : (ff.attachedForms || [`${ratingForm.productCode}-2025-BASE`, 'BRMS-RULEFLOW-CERT']);
+
+            const auditTrail = brmsData.auditTrail || [];
+            const traceLines = [
+              `1. [BRMS Orchestrator] Executed RuleFlow #${selectedFlowId} "${chosenFlow?.flowName || chosenFlow?.flowCode || selectedFlowId}" in ${brmsData.totalDurationMs}ms`,
+              `2. [Correlation ID] ${brmsData.correlationId}`,
+              ...auditTrail.map((step, idx) =>
+                `${idx + 3}. [${step.nodeName || step.nodeId}] (${step.nodeType}) -> ${step.evaluationSummary || 'Completed'} (${((step.executionTimeNanos || 0) / 1000000).toFixed(2)}ms)`
+              ),
+              `${auditTrail.length + 3}. [Rating Result] Final Annual Premium: $${finalPrem.toLocaleString(undefined, { minimumFractionDigits: 2 })} | Status: ${ratingStatus}`
+            ];
+
+            setRateResult({
+              ratingStatus,
+              productCode: ratingForm.productCode,
+              planCode: chosenFlow?.planCode || `${ratingForm.productCode}_COMMERCIAL`,
+              resolvedFilingVersion: `BRMS Flow: ${chosenFlow?.flowCode || selectedFlowId}`,
+              stateCode: ratingForm.stateCode,
+              serffTrackingNumber: `BRMS-${ratingForm.stateCode}-${chosenFlow?.flowCode || selectedFlowId}`,
+              exposureUnits: brmsFacts.exposureUnits,
+              baseRate: ff.baseLossCost || ff.baseRate || 1.85,
+              basePremium: ff.basePremium || finalPrem,
+              territoryFactor: ff.fleetRelativityFactor || ff.riskFactor || 1.0,
+              limitRelativityFactor: 1.0,
+              deductibleFactor: 1.0,
+              subtotalPremium: ff.preliminaryPremium || finalPrem,
+              scheduleModifier: schedMod,
+              finalAnnualPremium: finalPrem,
+              minimumPremium: 2500,
+              isBrms: true,
+              brmsFlowName: chosenFlow?.flowName || chosenFlow?.flowCode,
+              brmsCorrelationId: brmsData.correlationId,
+              brmsDurationMs: brmsData.totalDurationMs,
+              brmsStepsCount: auditTrail.length,
+              underwritingReferrals: ratingStatus === 'REFERRAL'
+                ? ['BRMS Underwriting Referral: Flagged for review by RuleFlow conditional branch.']
+                : [],
+              attachedForms,
+              calculationTrace: traceLines
+            });
+            setIsRating(false);
+            return;
+          } else {
+            setError(`BRMS RuleFlow Error: ${brmsData.errorMessage}`);
+            setIsRating(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('BRMS execution call failed, falling back to SERFF engine:', err);
+      }
+    }
+
+    // 2. Standard SERFF Engine Fallback
     const payload = {
       tenantId: Number(activeTenantId) || 1,
       productCode: ratingForm.productCode,
@@ -1998,6 +2144,82 @@ const RatingQuoteDialog = ({
           </Paper>
         )}
 
+        {/* Rating Engine Mode & RuleFlow Selection */}
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 2,
+            borderRadius: 2,
+            background: ratingEngineMode === 'BRMS'
+              ? 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)'
+              : '#f8fafc',
+            borderColor: ratingEngineMode === 'BRMS' ? '#86efac' : '#cbd5e1'
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Workflow size={20} color={ratingEngineMode === 'BRMS' ? '#16a34a' : '#64748b'} />
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: ratingEngineMode === 'BRMS' ? '#14532d' : '#334155' }}>
+                  Rating Orchestration Engine
+                </Typography>
+                <Typography variant="caption" sx={{ color: ratingEngineMode === 'BRMS' ? '#166534' : '#64748b' }}>
+                  {ratingEngineMode === 'BRMS' ? 'FICO Blaze-style DAG Visualizer & Rule Flow Orchestration' : 'Traditional Actuarial SERFF Table Matrix Engine'}
+                </Typography>
+              </Box>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                size="small"
+                variant={ratingEngineMode === 'BRMS' ? 'contained' : 'outlined'}
+                color="success"
+                onClick={() => setRatingEngineMode('BRMS')}
+                startIcon={<Zap size={14} />}
+                sx={{ textTransform: 'none', fontWeight: 700, fontSize: '0.8rem' }}
+              >
+                BRMS Rule Flow
+              </Button>
+              <Button
+                size="small"
+                variant={ratingEngineMode === 'SERFF' ? 'contained' : 'outlined'}
+                color="inherit"
+                onClick={() => setRatingEngineMode('SERFF')}
+                sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8rem' }}
+              >
+                Classic SERFF
+              </Button>
+            </Box>
+          </Box>
+
+          {ratingEngineMode === 'BRMS' && (
+            <Box sx={{ mt: 1 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Active BRMS RuleFlow Graph</InputLabel>
+                <Select
+                  label="Active BRMS RuleFlow Graph"
+                  value={selectedFlowId}
+                  onChange={(e) => setSelectedFlowId(e.target.value)}
+                  disabled={isLoadingFlows}
+                >
+                  {availableFlows.map((f) => (
+                    <MenuItem key={f.flowId} value={String(f.flowId)}>
+                      {f.flowName} ({f.flowCode}) &mdash; {f.productCode || 'ALL'} / {f.planCode || 'DEFAULT'} [{f.status}]
+                    </MenuItem>
+                  ))}
+                  {availableFlows.length === 0 && (
+                    <MenuItem value="" disabled>
+                      No RuleFlows loaded
+                    </MenuItem>
+                  )}
+                </Select>
+              </FormControl>
+              <Typography variant="caption" sx={{ color: '#166534', display: 'block', mt: 0.75 }}>
+                ⚡ Auto-associated with rating plans, conditional switches, and MVEL coordinate decision tables.
+              </Typography>
+            </Box>
+          )}
+        </Paper>
+
         <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#334155' }}>
           Rating Parameters &amp; Regulatory Inputs:
         </Typography>
@@ -2012,6 +2234,7 @@ const RatingQuoteDialog = ({
                 onChange={(e) => setRatingForm({ ...ratingForm, productCode: e.target.value })}
               >
                 <MenuItem value="TECH_EO">Technology Errors &amp; Omissions</MenuItem>
+                <MenuItem value="COMMERCIAL_AUTO">Commercial Automobile &amp; Fleet</MenuItem>
                 <MenuItem value="MED_MAL">Medical Malpractice</MenuItem>
                 <MenuItem value="DNO">Directors &amp; Officers Liability</MenuItem>
               </Select>
@@ -2125,19 +2348,31 @@ const RatingQuoteDialog = ({
 
         <Button
           variant="contained"
-          color="secondary"
+          color={ratingEngineMode === 'BRMS' ? 'success' : 'secondary'}
           fullWidth
           size="large"
-          startIcon={isRating ? <CircularProgress size={18} color="inherit" /> : <Calculator size={18} />}
+          startIcon={isRating ? <CircularProgress size={18} color="inherit" /> : (ratingEngineMode === 'BRMS' ? <Zap size={18} /> : <Calculator size={18} />)}
           disabled={isRating}
           onClick={handleCalculateRate}
+          sx={{ fontWeight: 700 }}
         >
-          {isRating ? 'Invoking Rating Algorithm & Matrix...' : 'Run Rating Calculation (SERFF Engine)'}
+          {isRating
+            ? 'Invoking Rating Algorithm & RuleFlow...'
+            : (ratingEngineMode === 'BRMS' ? 'Execute BRMS RuleFlow Graph' : 'Run Rating Calculation (SERFF Engine)')}
         </Button>
 
         {rateResult && (
           <Box sx={{ mt: 1 }}>
-            <Paper variant="outlined" sx={{ p: 2.5, backgroundColor: '#f8fafc', borderLeft: '4px solid #0284c7' }}>
+            <Paper variant="outlined" sx={{ p: 2.5, backgroundColor: '#f8fafc', borderLeft: rateResult.isBrms ? '4px solid #16a34a' : '4px solid #0284c7' }}>
+              {rateResult.isBrms && (
+                <Chip
+                  icon={<Zap size={14} />}
+                  label={`Orchestrated by BRMS RuleFlow Engine (${rateResult.brmsStepsCount || 0} Nodes Executed in ${rateResult.brmsDurationMs || 0} ms)`}
+                  size="small"
+                  color="success"
+                  sx={{ fontWeight: 700, mb: 1.5 }}
+                />
+              )}
               <Grid container spacing={2} alignItems="center">
                 <Grid size={{ xs: 12, sm: 7 }}>
                   <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, letterSpacing: '0.05em' }}>
@@ -2152,8 +2387,8 @@ const RatingQuoteDialog = ({
                 </Grid>
                 <Grid size={{ xs: 12, sm: 5 }} sx={{ textAlign: { xs: 'left', sm: 'right' } }}>
                   <StatusPill status={rateResult.ratingStatus === 'RATED' ? 'Quoted' : 'Under Review'} />
-                  <Typography variant="body2" sx={{ fontWeight: 700, color: '#0284c7', mt: 0.5 }}>
-                    SERFF: {rateResult.serffTrackingNumber}
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: rateResult.isBrms ? '#16a34a' : '#0284c7', mt: 0.5 }}>
+                    {rateResult.isBrms ? `RULEFLOW: ${rateResult.planCode || rateResult.productCode}` : `SERFF: ${rateResult.serffTrackingNumber}`}
                   </Typography>
                   <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
                     Filing Version: {rateResult.resolvedFilingVersion || '2025.1'}
@@ -2169,7 +2404,7 @@ const RatingQuoteDialog = ({
 
               <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #e2e8f0' }}>
                 <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', display: 'block', mb: 0.5 }}>
-                  Algorithm Execution Audit Trace:
+                  Algorithm &amp; RuleFlow Execution Audit Trace:
                 </Typography>
                 <Box sx={{ backgroundColor: '#0f172a', color: '#38bdf8', p: 1.5, borderRadius: '6px', fontSize: '0.74rem', fontFamily: 'monospace' }}>
                   {(rateResult.calculationTrace || []).map((t, idx) => (
@@ -2478,6 +2713,7 @@ const QuotesView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
                 >
                   <MenuItem value="">All Products</MenuItem>
                   <MenuItem value="TECH_EO">Technology E&amp;O</MenuItem>
+                  <MenuItem value="COMMERCIAL_AUTO">Commercial Automobile &amp; Fleet</MenuItem>
                   <MenuItem value="MED_MAL">Medical Malpractice</MenuItem>
                   <MenuItem value="DNO">Directors &amp; Officers</MenuItem>
                 </Select>
