@@ -76,7 +76,15 @@ import {
   FileCheck,
   GitFork,
   Workflow,
-  Zap
+  Zap,
+  Inbox,
+  Paperclip,
+  Building,
+  UserPlus,
+  Folder,
+  FolderCheck,
+  Search,
+  Trash2
 } from 'lucide-react';
 
 // --- Dynamic Per-Tenant Theme Builder ---
@@ -2911,6 +2919,14 @@ const DocumentsManager = ({
   const [generating, setGenerating] = useState(false);
   const [flash, setFlash] = useState(null);
 
+  // Attach from Inbox state
+  const [openAttachInboxModal, setOpenAttachInboxModal] = useState(false);
+  const [inboxQueuedDocs, setInboxQueuedDocs] = useState([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+  const [selectedInboxId, setSelectedInboxId] = useState('');
+  const [attachType, setAttachType] = useState('APPLICATION');
+  const [attachingInbox, setAttachingInbox] = useState(false);
+
   // Generator form state
   const [genForm, setGenForm] = useState({
     docType: 'DEC_PAGE',
@@ -3019,6 +3035,54 @@ const DocumentsManager = ({
     }
   };
 
+  const handleOpenAttachInbox = async () => {
+    setLoadingInbox(true);
+    setOpenAttachInboxModal(true);
+    try {
+      const data = await apiFetch(`/document-api/documents/incoming?status=QUEUED&tenantId=${activeTenantId}`);
+      setInboxQueuedDocs(Array.isArray(data) ? data : []);
+      if (Array.isArray(data) && data.length > 0) {
+        setSelectedInboxId(String(data[0].incomingId));
+      } else {
+        setSelectedInboxId('');
+      }
+    } catch (e) {
+      console.error('Failed to load queued incoming documents:', e);
+      setFlash({ type: 'error', text: `Failed to load inbox queued documents: ${e.message}` });
+    } finally {
+      setLoadingInbox(false);
+    }
+  };
+
+  const handleConfirmAttachInbox = async () => {
+    if (!selectedInboxId) return;
+    setAttachingInbox(true);
+    try {
+      const chosenDoc = inboxQueuedDocs.find((d) => String(d.incomingId) === String(selectedInboxId));
+      await apiFetch(`/document-api/documents/incoming/${selectedInboxId}/attach?tenantId=${activeTenantId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          entityType: entityType || 'POLICY',
+          entityId: Number(entityId),
+          entityNbr: entityNbr,
+          docType: attachType,
+          docTitle: chosenDoc?.documentName || 'Attached Document',
+          attachedBy: 'Underwriter'
+        })
+      });
+      setFlash({
+        type: 'success',
+        text: `Incoming document "${chosenDoc?.documentName || selectedInboxId}" successfully attached to ${entityNbr || entityType}!`
+      });
+      setOpenAttachInboxModal(false);
+      await loadDocuments();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to attach document from inbox: ${err.message}` });
+    } finally {
+      setAttachingInbox(false);
+    }
+  };
+
   const filteredDocs = useMemo(() => {
     return documents.filter((d) => {
       const matchType = filterType === 'ALL' || d.docType === filterType;
@@ -3056,6 +3120,18 @@ const DocumentsManager = ({
       case 'BINDER_LETTER':
       case 'LETTER':
         return <Chip label="Binder Letter" size="small" sx={{ bgcolor: '#fdf4ff', color: '#7e22ce', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #f0abfc' }} />;
+      case 'APPLICATION':
+        return <Chip label="Application" size="small" sx={{ bgcolor: '#fef3c7', color: '#b45309', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #fde68a' }} />;
+      case 'LOSS_RUNS':
+        return <Chip label="Loss Runs" size="small" sx={{ bgcolor: '#ffedd5', color: '#c2410c', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #fed7aa' }} />;
+      case 'FINANCIALS':
+        return <Chip label="Financials" size="small" sx={{ bgcolor: '#ecfeff', color: '#0e7490', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #a5f3fc' }} />;
+      case 'SCHEDULE':
+        return <Chip label="Schedule" size="small" sx={{ bgcolor: '#f1f5f9', color: '#334155', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #cbd5e1' }} />;
+      case 'ENDORSEMENT':
+        return <Chip label="Endorsement" size="small" sx={{ bgcolor: '#fae8ff', color: '#86198f', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #f5d0fe' }} />;
+      case 'ATTACHMENT':
+        return <Chip label="Attachment" size="small" sx={{ bgcolor: '#f3e8ff', color: '#6b21a8', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #e9d5ff' }} />;
       default:
         return <Chip label={type} size="small" sx={{ fontSize: '0.72rem' }} />;
     }
@@ -3138,6 +3214,18 @@ const DocumentsManager = ({
               >
                 Refresh
               </Button>
+              {entityType && entityId && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="secondary"
+                  startIcon={<Paperclip size={15} />}
+                  onClick={handleOpenAttachInbox}
+                  sx={{ fontWeight: 600 }}
+                >
+                  Attach from Inbox
+                </Button>
+              )}
               <Button
                 variant="contained"
                 size="small"
@@ -3244,12 +3332,20 @@ const DocumentsManager = ({
                         {doc.pageCount || 1}
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          label="Aspose.PDF 24.12"
-                          size="small"
-                          variant="outlined"
-                          sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#f1f5f9', fontWeight: 600 }}
-                        />
+                        {doc.status === 'ATTACHED' || (doc.generatedBy && doc.generatedBy !== 'DOCGEN_SERVICE' && doc.generatedBy !== 'ASPOSE_ENGINE') ? (
+                          <Chip
+                            label={doc.generatedBy || 'Inbox Attachment'}
+                            size="small"
+                            sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#e0f2fe', color: '#0369a1', fontWeight: 600 }}
+                          />
+                        ) : (
+                          <Chip
+                            label="Aspose.PDF 24.12"
+                            size="small"
+                            variant="outlined"
+                            sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#f1f5f9', fontWeight: 600 }}
+                          />
+                        )}
                       </TableCell>
                       <TableCell sx={{ fontSize: '0.8rem', color: '#475569' }}>
                         {doc.createdDt ? String(doc.createdDt).substring(0, 16) : 'Just now'}
@@ -3488,6 +3584,90 @@ const DocumentsManager = ({
         </DialogActions>
       </Dialog>
 
+      {/* ATTACH FROM INBOX MODAL DIALOG */}
+      <Dialog
+        open={openAttachInboxModal}
+        onClose={() => !attachingInbox && setOpenAttachInboxModal(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Paperclip size={20} style={{ color: '#0284c7' }} />
+          Attach Document from Intake Inbox Queue
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          <Alert severity="info" sx={{ mb: 2.5, fontSize: '0.82rem' }}>
+            Associate an unattached incoming document dropped in <code>C:\helios-storage\documents\tenant_{activeTenantId}\inbox\</code> directly to this {entityType} (<strong>{entityNbr}</strong>).
+          </Alert>
+
+          {loadingInbox ? (
+            <Box sx={{ textAlign: 'center', py: 3 }}>
+              <CircularProgress size={24} />
+              <Typography variant="body2" sx={{ mt: 1, color: '#64748b' }}>Scanning inbox queue...</Typography>
+            </Box>
+          ) : inboxQueuedDocs.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 4, color: '#64748b' }}>
+              <Inbox size={32} style={{ opacity: 0.4, marginBottom: 8 }} />
+              <Typography variant="body1" sx={{ fontWeight: 600 }}>No unattached queued documents</Typography>
+              <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+                Drop PDF or document files into <code>tenant_{activeTenantId}\inbox\</code> to ingest new files.
+              </Typography>
+            </Box>
+          ) : (
+            <Grid container spacing={2} sx={{ mt: 0.5 }}>
+              <Grid size={{ xs: 12 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Select Queued Document</InputLabel>
+                  <Select
+                    value={selectedInboxId}
+                    label="Select Queued Document"
+                    onChange={(e) => setSelectedInboxId(e.target.value)}
+                  >
+                    {inboxQueuedDocs.map((doc) => (
+                      <MenuItem key={doc.incomingId} value={String(doc.incomingId)}>
+                        #{doc.incomingId} — {doc.documentName} ({doc.fileName}) {doc.groupName ? `[${doc.groupName}]` : ''}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid size={{ xs: 12 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Document Classification / Type</InputLabel>
+                  <Select
+                    value={attachType}
+                    label="Document Classification / Type"
+                    onChange={(e) => setAttachType(e.target.value)}
+                  >
+                    <MenuItem value="APPLICATION">Commercial Insurance Application (ACORD)</MenuItem>
+                    <MenuItem value="LOSS_RUNS">Historical Loss Runs &amp; Claim Experience</MenuItem>
+                    <MenuItem value="FINANCIALS">Audited Financial Statements</MenuItem>
+                    <MenuItem value="SCHEDULE">Exposure / Rating Schedule</MenuItem>
+                    <MenuItem value="ENDORSEMENT">Policy Endorsement / Change Request</MenuItem>
+                    <MenuItem value="ATTACHMENT">General Supporting Attachment</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+          <Button onClick={() => setOpenAttachInboxModal(false)} disabled={attachingInbox}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleConfirmAttachInbox}
+            disabled={attachingInbox || !selectedInboxId || inboxQueuedDocs.length === 0}
+            startIcon={attachingInbox ? <CircularProgress size={16} color="inherit" /> : <Paperclip size={16} />}
+          >
+            {attachingInbox ? 'Attaching...' : 'Attach to ' + (entityNbr || entityType)}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* PDF PREVIEW MODAL DIALOG */}
       <Dialog
         open={Boolean(previewDoc)}
@@ -3554,29 +3734,1019 @@ const DocumentsManager = ({
 };
 
 // ============================================================================
-// TOP-LEVEL DOCUMENTS & FORMS VIEW
+// 4.6. INCOMING DOCUMENTS INBOX & PROCESSING WORKFLOW
+// Manages unattached inbox documents dropped in C:\helios-storage\documents\<tenant>\inbox
+// Preserves folder groupings, queues files, attaches to submissions/policies,
+// and creates new organizations and submissions on intake.
+// ============================================================================
+const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [flash, setFlash] = useState(null);
+
+  // Modals state
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [attachDoc, setAttachDoc] = useState(null);
+  const [createSubDoc, setCreateSubDoc] = useState(null);
+
+  // Attach modal state
+  const [attachEntityType, setAttachEntityType] = useState('SUBMISSION');
+  const [submissionsList, setSubmissionsList] = useState([]);
+  const [policiesList, setPoliciesList] = useState([]);
+  const [selectedEntityId, setSelectedEntityId] = useState('');
+  const [attachClassification, setAttachClassification] = useState('APPLICATION');
+  const [attachCustomTitle, setAttachCustomTitle] = useState('');
+  const [loadingEntities, setLoadingEntities] = useState(false);
+  const [submittingAttach, setSubmittingAttach] = useState(false);
+
+  // Create submission & org modal state
+  const [createForm, setCreateForm] = useState({
+    orgName: '',
+    underwriter: 'Michael Chang',
+    productType: 'Technology Errors & Omissions',
+    effectiveDate: new Date().toISOString().substring(0, 10),
+    expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+    retroactiveDate: new Date().toISOString().substring(0, 10),
+    limitAmount: '$1,000,000',
+    retentionAmount: '$10,000',
+    docType: 'APPLICATION',
+    docTitle: ''
+  });
+  const [submittingCreate, setSubmittingCreate] = useState(false);
+  const [createSuccessResult, setCreateSuccessResult] = useState(null);
+
+  const loadIncomingDocs = useCallback(async () => {
+    setLoading(true);
+    try {
+      let url = `/document-api/documents/incoming?tenantId=${activeTenantId}`;
+      if (filterStatus !== 'ALL') {
+        url += `&status=${filterStatus}`;
+      }
+      const data = await apiFetch(url);
+      setDocs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load incoming documents:', err);
+      setFlash({ type: 'error', text: `Failed to load incoming documents: ${err.message}` });
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, activeTenantId, filterStatus]);
+
+  useEffect(() => {
+    loadIncomingDocs();
+  }, [loadIncomingDocs]);
+
+  const handleScanInbox = async () => {
+    setScanning(true);
+    try {
+      const res = await apiFetch(`/document-api/documents/incoming/scan?tenantId=${activeTenantId}`, {
+        method: 'POST'
+      });
+      const count = res?.processedCount || 0;
+      setFlash({
+        type: 'success',
+        text: `Inbox scan complete! ${count} new incoming document(s) ingested into queue.`
+      });
+      await loadIncomingDocs();
+    } catch (err) {
+      console.error('Error scanning inbox:', err);
+      setFlash({ type: 'error', text: `Inbox scan failed: ${err.message}` });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleDiscard = async (incomingId, docName) => {
+    try {
+      await apiFetch(`/document-api/documents/incoming/${incomingId}?tenantId=${activeTenantId}`, {
+        method: 'DELETE'
+      });
+      setFlash({ type: 'info', text: `Incoming document #${incomingId} ("${docName}") marked as discarded.` });
+      await loadIncomingDocs();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to discard document: ${err.message}` });
+    }
+  };
+
+  // Open Attach Modal and pre-load entities
+  const handleOpenAttachModal = async (doc) => {
+    setAttachDoc(doc);
+    setAttachCustomTitle(doc.documentName || doc.fileName);
+    setAttachClassification(
+      doc.documentName?.toLowerCase().includes('loss') ? 'LOSS_RUNS' : 'APPLICATION'
+    );
+    setLoadingEntities(true);
+    setSelectedEntityId('');
+    try {
+      const [subs, pols] = await Promise.all([
+        apiFetch('/api/submissions').catch(() => []),
+        apiFetch('/api/policies').catch(() => [])
+      ]);
+      const validSubs = Array.isArray(subs) ? subs : [];
+      const validPols = Array.isArray(pols) ? pols : [];
+      setSubmissionsList(validSubs);
+      setPoliciesList(validPols);
+      if (attachEntityType === 'SUBMISSION' && validSubs.length > 0) {
+        setSelectedEntityId(String(validSubs[0].submsnId));
+      } else if (validPols.length > 0) {
+        setSelectedEntityId(String(validPols[0].policyId || validPols[0].id));
+      }
+    } catch (e) {
+      console.error('Failed to load submissions/policies for attaching:', e);
+    } finally {
+      setLoadingEntities(false);
+    }
+  };
+
+  const handleConfirmAttach = async () => {
+    if (!attachDoc || !selectedEntityId) return;
+    setSubmittingAttach(true);
+    try {
+      let entityNbr = '';
+      if (attachEntityType === 'SUBMISSION') {
+        const found = submissionsList.find((s) => String(s.submsnId) === String(selectedEntityId));
+        entityNbr = found ? found.submsnNbr : `SUB-${selectedEntityId}`;
+      } else {
+        const found = policiesList.find((p) => String(p.policyId || p.id) === String(selectedEntityId));
+        entityNbr = found ? (found.id || found.policyNbr) : `POL-${selectedEntityId}`;
+      }
+
+      await apiFetch(`/document-api/documents/incoming/${attachDoc.incomingId}/attach?tenantId=${activeTenantId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          entityType: attachEntityType,
+          entityId: Number(selectedEntityId),
+          entityNbr: entityNbr,
+          docType: attachClassification,
+          docTitle: attachCustomTitle || attachDoc.documentName,
+          attachedBy: activeRole?.roleName || 'Intake Underwriter'
+        })
+      });
+
+      setFlash({
+        type: 'success',
+        text: `Document #${attachDoc.incomingId} successfully attached to ${attachEntityType} ${entityNbr}!`
+      });
+      setAttachDoc(null);
+      await loadIncomingDocs();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to attach document: ${err.message}` });
+    } finally {
+      setSubmittingAttach(false);
+    }
+  };
+
+  // Open Create Submission Modal
+  const handleOpenCreateSubModal = (doc) => {
+    setCreateSubDoc(doc);
+    setCreateSuccessResult(null);
+    let autoOrg = doc.groupName ? doc.groupName.replace(/_/g, ' ') : doc.documentName.replace(/_/g, ' ');
+    autoOrg = autoOrg.replace(/batch|acord|app|schedule/gi, '').trim();
+    if (!autoOrg) autoOrg = 'New Applicant Group';
+
+    setCreateForm({
+      orgName: autoOrg,
+      underwriter: 'Michael Chang',
+      productType: 'Technology Errors & Omissions',
+      effectiveDate: new Date().toISOString().substring(0, 10),
+      expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+      retroactiveDate: new Date().toISOString().substring(0, 10),
+      limitAmount: '$1,000,000',
+      retentionAmount: '$10,000',
+      docType: 'APPLICATION',
+      docTitle: `${autoOrg} — Intake Application`
+    });
+  };
+
+  const handleConfirmCreateSubmission = async (e) => {
+    if (e) e.preventDefault();
+    if (!createSubDoc) return;
+    setSubmittingCreate(true);
+    try {
+      const res = await apiFetch(`/document-api/documents/incoming/${createSubDoc.incomingId}/create-submission?tenantId=${activeTenantId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          orgName: createForm.orgName,
+          underwriter: createForm.underwriter,
+          productType: createForm.productType,
+          effectiveDate: createForm.effectiveDate,
+          expirationDate: createForm.expirationDate,
+          retroactiveDate: createForm.retroactiveDate,
+          limitAmount: createForm.limitAmount,
+          retentionAmount: createForm.retentionAmount,
+          docType: createForm.docType,
+          docTitle: createForm.docTitle,
+          attachedBy: createForm.underwriter
+        })
+      });
+
+      setCreateSuccessResult(res);
+      setFlash({
+        type: 'success',
+        text: `New Organization "${res.orgName}" and Submission ${res.submissionNbr} created successfully with document attached!`
+      });
+      await loadIncomingDocs();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to create submission from document: ${err.message}` });
+    } finally {
+      setSubmittingCreate(false);
+    }
+  };
+
+  const filteredDocs = useMemo(() => {
+    return docs.filter((d) => {
+      const matchSearch =
+        !searchQuery ||
+        d.documentName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.fileName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.groupName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.attachedEntityNbr?.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchSearch;
+    });
+  }, [docs, searchQuery]);
+
+  const stats = useMemo(() => {
+    const total = docs.length;
+    const queued = docs.filter((d) => d.status === 'QUEUED').length;
+    const attached = docs.filter((d) => d.status === 'ATTACHED').length;
+    const groupCount = new Set(docs.map((d) => d.groupName).filter(Boolean)).size;
+    return { total, queued, attached, groupCount };
+  }, [docs]);
+
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  };
+
+  const renderStatusChip = (status) => {
+    switch (status) {
+      case 'QUEUED':
+        return (
+          <Chip
+            label="Queued in Inbox"
+            size="small"
+            sx={{ bgcolor: '#fef3c7', color: '#b45309', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #fde68a' }}
+          />
+        );
+      case 'ATTACHED':
+        return (
+          <Chip
+            label="Attached"
+            size="small"
+            sx={{ bgcolor: '#dcfce7', color: '#15803d', fontWeight: 700, fontSize: '0.72rem', border: '1px solid #86efac' }}
+          />
+        );
+      case 'DISCARDED':
+        return (
+          <Chip
+            label="Discarded"
+            size="small"
+            sx={{ bgcolor: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: '0.72rem' }}
+          />
+        );
+      default:
+        return <Chip label={status} size="small" sx={{ fontSize: '0.72rem' }} />;
+    }
+  };
+
+  const renderAttachedEntity = (doc) => {
+    if (!doc.attachedEntityType || !doc.attachedEntityNbr) {
+      return <Typography variant="caption" color="textSecondary">—</Typography>;
+    }
+    const isSub = doc.attachedEntityType.toUpperCase() === 'SUBMISSION';
+    return (
+      <Chip
+        label={`${doc.attachedEntityType}: ${doc.attachedEntityNbr}`}
+        size="small"
+        clickable
+        color="primary"
+        variant="outlined"
+        onClick={() => {
+          if (onNavigate) {
+            onNavigate(isSub ? 'submissions' : 'policy');
+          }
+        }}
+        sx={{ fontWeight: 600, fontSize: '0.72rem' }}
+      />
+    );
+  };
+
+  return (
+    <Box>
+      {flash && (
+        <Alert severity={flash.type} onClose={() => setFlash(null)} sx={{ mb: 2 }}>
+          {flash.text}
+        </Alert>
+      )}
+
+      {/* Top Metrics Cards */}
+      <Grid container spacing={2} sx={{ mb: 2.5 }}>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Total Ingested</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main', mt: 0.2 }}>
+                {stats.total}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Queued (Pending Action)</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#d97706', mt: 0.2 }}>
+                {stats.queued}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Attached / Linked</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#059669', mt: 0.2 }}>
+                {stats.attached}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 6, sm: 3 }}>
+          <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600 }}>Grouped Batches</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: '#7c3aed', mt: 0.2 }}>
+                {stats.groupCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Main Inbox Table Card */}
+      <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+        <CardContent sx={{ p: 2.5 }}>
+          {/* Header & Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Inbox size={20} style={{ color: '#0284c7' }} />
+                Incoming Documents &amp; Intake Queue
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                Monitored inbox: <code>C:\helios-storage\documents\tenant_{activeTenantId}\inbox\</code> • Processed queue: <code>...\queue\</code>
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<RefreshCw size={15} />}
+                onClick={loadIncomingDocs}
+                disabled={loading}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                color="primary"
+                startIcon={scanning ? <CircularProgress size={16} color="inherit" /> : <RefreshCw size={16} />}
+                onClick={handleScanInbox}
+                disabled={scanning}
+                sx={{ fontWeight: 600 }}
+              >
+                {scanning ? 'Scanning Inbox...' : 'Scan Inbox Now'}
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Filter Bar */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 1.5, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {[
+                { id: 'ALL', label: `All (${docs.length})` },
+                { id: 'QUEUED', label: `Queued (${stats.queued})` },
+                { id: 'ATTACHED', label: `Attached (${stats.attached})` },
+                { id: 'DISCARDED', label: 'Discarded' }
+              ].map((pill) => (
+                <Chip
+                  key={pill.id}
+                  label={pill.label}
+                  size="small"
+                  clickable
+                  variant={filterStatus === pill.id ? 'filled' : 'outlined'}
+                  color={filterStatus === pill.id ? 'primary' : 'default'}
+                  onClick={() => setFilterStatus(pill.id)}
+                  sx={{ fontWeight: 600, fontSize: '0.75rem' }}
+                />
+              ))}
+            </Box>
+
+            <TextField
+              size="small"
+              placeholder="Search incoming documents or batch..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{ width: { xs: '100%', sm: 280 } }}
+            />
+          </Box>
+
+          {/* Documents Table */}
+          <TableContainer component={Paper} elevation={0} variant="outlined" sx={{ borderRadius: 1.5 }}>
+            <Table size="small">
+              <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700, width: 60 }}>ID</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 40 }}></TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Document Title &amp; File</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 200 }}>Folder Group / Batch</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 140 }}>Received Date</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 90 }}>Size</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 120 }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 170 }}>Attached To</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, width: 220 }}>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
+                      <CircularProgress size={28} />
+                      <Typography variant="body2" sx={{ mt: 1, color: '#64748b' }}>Loading incoming documents queue...</Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : filteredDocs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} sx={{ textAlign: 'center', py: 5, color: '#94a3b8' }}>
+                      <Inbox size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                      <Typography variant="body2" fontWeight={600} color="textSecondary">
+                        No incoming documents found in this view
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Drop files or grouped folders into <code>C:\helios-storage\documents\tenant_{activeTenantId}\inbox\</code> and click &quot;Scan Inbox Now&quot;.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredDocs.map((doc) => (
+                    <TableRow key={doc.incomingId} hover>
+                      <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
+                        #{doc.incomingId}
+                      </TableCell>
+                      <TableCell sx={{ pr: 0 }}>
+                        <FileText size={18} style={{ color: '#0284c7' }} />
+                      </TableCell>
+                      <TableCell>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 600,
+                            color: '#1e293b',
+                            cursor: 'pointer',
+                            '&:hover': { color: 'primary.main', textDecoration: 'underline' }
+                          }}
+                          onClick={() => setPreviewDoc(doc)}
+                        >
+                          {doc.documentName}
+                        </Typography>
+                        <code style={{ fontSize: '0.72rem', color: '#64748b' }}>{doc.fileName}</code>
+                      </TableCell>
+                      <TableCell>
+                        {doc.groupName ? (
+                          <Chip
+                            icon={<Folder size={13} style={{ marginLeft: 4 }} />}
+                            label={doc.groupName}
+                            size="small"
+                            sx={{
+                              bgcolor: '#f5f3ff',
+                              color: '#6d28d9',
+                              fontWeight: 600,
+                              fontSize: '0.72rem',
+                              border: '1px solid #ddd6fe'
+                            }}
+                          />
+                        ) : (
+                          <Typography variant="caption" color="textSecondary">Standalone File</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.8rem', color: '#475569' }}>
+                        {doc.receivedDt ? String(doc.receivedDt).substring(0, 16) : '—'}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.8rem', color: '#475569' }}>
+                        {formatFileSize(doc.fileSizeBytes)}
+                      </TableCell>
+                      <TableCell>
+                        {renderStatusChip(doc.status)}
+                      </TableCell>
+                      <TableCell>
+                        {renderAttachedEntity(doc)}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Eye size={13} />}
+                            onClick={() => setPreviewDoc(doc)}
+                            sx={{ minWidth: 68, py: 0.3 }}
+                          >
+                            Open
+                          </Button>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            title="Download File"
+                            onClick={() => {
+                              window.open(`/document-api/documents/incoming/${doc.incomingId}/download?tenantId=${activeTenantId}`, '_blank');
+                            }}
+                          >
+                            <Download size={15} />
+                          </IconButton>
+                          {doc.status !== 'ATTACHED' && (
+                            <>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="secondary"
+                                startIcon={<Paperclip size={13} />}
+                                onClick={() => handleOpenAttachModal(doc)}
+                                sx={{ minWidth: 70, py: 0.3, fontWeight: 600 }}
+                              >
+                                Attach
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="primary"
+                                startIcon={<UserPlus size={13} />}
+                                onClick={() => handleOpenCreateSubModal(doc)}
+                                sx={{ minWidth: 90, py: 0.3, fontWeight: 600 }}
+                              >
+                                New Sub
+                              </Button>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                title="Discard Document"
+                                onClick={() => handleDiscard(doc.incomingId, doc.documentName)}
+                              >
+                                <Trash2 size={15} />
+                              </IconButton>
+                            </>
+                          )}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+      </Card>
+
+      {/* 1. DOCUMENT PREVIEW MODAL */}
+      <Dialog
+        open={Boolean(previewDoc)}
+        onClose={() => setPreviewDoc(null)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <FileText size={20} style={{ color: '#0284c7' }} />
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {previewDoc?.documentName || 'Document Preview'}
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                File: <code>{previewDoc?.fileName}</code> • Size: {formatFileSize(previewDoc?.fileSizeBytes)} • Status: {previewDoc?.status} {previewDoc?.groupName ? `• Group: ${previewDoc.groupName}` : ''}
+              </Typography>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<ExternalLink size={14} />}
+              onClick={() => {
+                window.open(`/document-api/documents/incoming/${previewDoc?.incomingId}/preview?tenantId=${activeTenantId}`, '_blank');
+              }}
+            >
+              Open in Tab
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<Download size={14} />}
+              onClick={() => {
+                window.open(`/document-api/documents/incoming/${previewDoc?.incomingId}/download?tenantId=${activeTenantId}`, '_blank');
+              }}
+            >
+              Download
+            </Button>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: 0, bgcolor: '#334155' }}>
+          {previewDoc && (
+            <Box sx={{ width: '100%', height: '700px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <iframe
+                src={`/document-api/documents/incoming/${previewDoc.incomingId}/preview?tenantId=${activeTenantId}#toolbar=1`}
+                title={previewDoc.documentName}
+                width="100%"
+                height="100%"
+                style={{ border: 'none' }}
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+          <Button onClick={() => setPreviewDoc(null)} variant="outlined">
+            Close Preview
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 2. ATTACH TO SUBMISSION OR POLICY MODAL */}
+      <Dialog
+        open={Boolean(attachDoc)}
+        onClose={() => !submittingAttach && setAttachDoc(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Paperclip size={20} style={{ color: '#0284c7' }} />
+          Associate Document to Policy or Submission
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          <Alert severity="info" sx={{ mb: 2.5, fontSize: '0.82rem' }}>
+            Attaching <strong>{attachDoc?.documentName}</strong> ({attachDoc?.fileName}) directly links the file to the selected record and displays it in its Documents tab.
+          </Alert>
+
+          <Grid container spacing={2}>
+            {/* Target Entity Type Toggle */}
+            <Grid size={{ xs: 12 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Target Entity Type</InputLabel>
+                <Select
+                  value={attachEntityType}
+                  label="Target Entity Type"
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setAttachEntityType(next);
+                    if (next === 'SUBMISSION' && submissionsList.length > 0) {
+                      setSelectedEntityId(String(submissionsList[0].submsnId));
+                    } else if (policiesList.length > 0) {
+                      setSelectedEntityId(String(policiesList[0].policyId || policiesList[0].id));
+                    }
+                  }}
+                >
+                  <MenuItem value="SUBMISSION">Underwriting Submission (UW_SUBMSN)</MenuItem>
+                  <MenuItem value="POLICY">Active Insurance Policy (UW_POLICY)</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            {/* Select Target Submission or Policy */}
+            <Grid size={{ xs: 12 }}>
+              {loadingEntities ? (
+                <Box sx={{ textAlign: 'center', py: 2 }}>
+                  <CircularProgress size={20} />
+                </Box>
+              ) : attachEntityType === 'SUBMISSION' ? (
+                <FormControl fullWidth size="small">
+                  <InputLabel>Select Target Submission</InputLabel>
+                  <Select
+                    value={selectedEntityId}
+                    label="Select Target Submission"
+                    onChange={(e) => setSelectedEntityId(e.target.value)}
+                  >
+                    {submissionsList.map((sub) => (
+                      <MenuItem key={sub.submsnId} value={String(sub.submsnId)}>
+                        {sub.submsnNbr} — {sub.orgName} ({sub.productType || 'Standard'} • {sub.status || 'Received'})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : (
+                <FormControl fullWidth size="small">
+                  <InputLabel>Select Target Policy</InputLabel>
+                  <Select
+                    value={selectedEntityId}
+                    label="Select Target Policy"
+                    onChange={(e) => setSelectedEntityId(e.target.value)}
+                  >
+                    {policiesList.map((pol) => (
+                      <MenuItem key={pol.policyId || pol.id} value={String(pol.policyId || pol.id)}>
+                        {pol.id || pol.policyNbr} — {pol.name} ({pol.productType})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Grid>
+
+            {/* Document Classification */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Classification / Type</InputLabel>
+                <Select
+                  value={attachClassification}
+                  label="Classification / Type"
+                  onChange={(e) => setAttachClassification(e.target.value)}
+                >
+                  <MenuItem value="APPLICATION">Commercial Application</MenuItem>
+                  <MenuItem value="LOSS_RUNS">Loss Runs &amp; Claim Experience</MenuItem>
+                  <MenuItem value="FINANCIALS">Audited Financial Statements</MenuItem>
+                  <MenuItem value="SCHEDULE">Rating Schedule</MenuItem>
+                  <MenuItem value="ENDORSEMENT">Endorsement Request</MenuItem>
+                  <MenuItem value="ATTACHMENT">General Attachment</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            {/* Custom Title */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Document Display Title"
+                value={attachCustomTitle}
+                onChange={(e) => setAttachCustomTitle(e.target.value)}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+          <Button onClick={() => setAttachDoc(null)} disabled={submittingAttach}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleConfirmAttach}
+            disabled={submittingAttach || !selectedEntityId}
+            startIcon={submittingAttach ? <CircularProgress size={16} color="inherit" /> : <Paperclip size={16} />}
+            sx={{ fontWeight: 600 }}
+          >
+            {submittingAttach ? 'Attaching...' : 'Confirm Attachment'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 3. CREATE NEW ORGANIZATION & SUBMISSION MODAL */}
+      <Dialog
+        open={Boolean(createSubDoc)}
+        onClose={() => !submittingCreate && setCreateSubDoc(null)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <UserPlus size={20} style={{ color: '#059669' }} />
+          Create Organization &amp; Submission from Document
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          {createSuccessResult ? (
+            <Box sx={{ py: 2 }}>
+              <Alert severity="success" sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  Submission Created &amp; Document Attached Successfully!
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  Organization: <strong>{createSuccessResult.orgName}</strong> (ID #{createSuccessResult.insuredPid})<br />
+                  Submission Number: <strong>{createSuccessResult.submissionNbr}</strong> (ID #{createSuccessResult.submissionId})<br />
+                  Document Attached: <strong>{createSubDoc?.documentName}</strong>
+                </Typography>
+              </Alert>
+
+              <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => {
+                    setCreateSubDoc(null);
+                    setCreateSuccessResult(null);
+                    if (onNavigate) onNavigate('submissions');
+                  }}
+                  startIcon={<Files size={16} />}
+                >
+                  View Submissions
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    setCreateSubDoc(null);
+                    setCreateSuccessResult(null);
+                  }}
+                >
+                  Done
+                </Button>
+              </Box>
+            </Box>
+          ) : (
+            <>
+              <Alert severity="info" sx={{ mb: 2.5, fontSize: '0.82rem' }}>
+                Quickly onboard a new insured organization in <code>dbo.PT_PARTY</code>, initialize a new <code>dbo.UW_SUBMSN</code> submission, and attach <strong>{createSubDoc?.fileName}</strong> automatically.
+              </Alert>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 8 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Insured Organization Name"
+                    value={createForm.orgName}
+                    onChange={(e) => setCreateForm({ ...createForm, orgName: e.target.value })}
+                    required
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Assigned Underwriter"
+                    value={createForm.underwriter}
+                    onChange={(e) => setCreateForm({ ...createForm, underwriter: e.target.value })}
+                    required
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Product Line / Coverage</InputLabel>
+                    <Select
+                      value={createForm.productType}
+                      label="Product Line / Coverage"
+                      onChange={(e) => setCreateForm({ ...createForm, productType: e.target.value })}
+                    >
+                      <MenuItem value="Technology Errors & Omissions">Technology Errors &amp; Omissions</MenuItem>
+                      <MenuItem value="Medical Malpractice">Medical Malpractice</MenuItem>
+                      <MenuItem value="Cyber Liability">Cyber Liability &amp; Privacy Risk</MenuItem>
+                      <MenuItem value="Directors & Officers">Directors &amp; Officers</MenuItem>
+                      <MenuItem value="Commercial General Liability">Commercial General Liability</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 3 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Effective Date"
+                    type="date"
+                    InputLabelProps={{ shrink: true }}
+                    value={createForm.effectiveDate}
+                    onChange={(e) => setCreateForm({ ...createForm, effectiveDate: e.target.value })}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 3 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Expiration Date"
+                    type="date"
+                    InputLabelProps={{ shrink: true }}
+                    value={createForm.expirationDate}
+                    onChange={(e) => setCreateForm({ ...createForm, expirationDate: e.target.value })}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Occurrence Limit ($)"
+                    value={createForm.limitAmount}
+                    onChange={(e) => setCreateForm({ ...createForm, limitAmount: e.target.value })}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Retention / Deductible ($)"
+                    value={createForm.retentionAmount}
+                    onChange={(e) => setCreateForm({ ...createForm, retentionAmount: e.target.value })}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Document Type</InputLabel>
+                    <Select
+                      value={createForm.docType}
+                      label="Document Type"
+                      onChange={(e) => setCreateForm({ ...createForm, docType: e.target.value })}
+                    >
+                      <MenuItem value="APPLICATION">Commercial Application</MenuItem>
+                      <MenuItem value="LOSS_RUNS">Loss Runs Report</MenuItem>
+                      <MenuItem value="FINANCIALS">Audited Financials</MenuItem>
+                      <MenuItem value="SCHEDULE">Rating Schedule</MenuItem>
+                      <MenuItem value="ATTACHMENT">Supporting Document</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Document Title"
+                    value={createForm.docTitle}
+                    onChange={(e) => setCreateForm({ ...createForm, docTitle: e.target.value })}
+                  />
+                </Grid>
+              </Grid>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+          {!createSuccessResult && (
+            <>
+              <Button onClick={() => setCreateSubDoc(null)} disabled={submittingCreate}>
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleConfirmCreateSubmission}
+                disabled={submittingCreate || !createForm.orgName}
+                startIcon={submittingCreate ? <CircularProgress size={16} color="inherit" /> : <UserPlus size={16} />}
+                sx={{ fontWeight: 600 }}
+              >
+                {submittingCreate ? 'Creating & Attaching...' : 'Create Org & Submission'}
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+// ============================================================================
+// TOP-LEVEL DOCUMENTS & WORKFLOW CENTER VIEW
 // ============================================================================
 const DocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
+  const [docTab, setDocTab] = useState(0);
+
   return (
     <Box>
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4, fontWeight: 700 }}>
-          Documents &amp; Policy Forms
+          Documents &amp; Intake Center
         </Typography>
         <Typography variant="body2" sx={{ color: '#64748b' }}>
-          Official policy declarations schedules, quote proposals, and binder letters generated with Aspose.PDF Engine
+          Intake inbox scanning, automated document queue processing, and enterprise policy/submission declarations
         </Typography>
       </Box>
 
-      <DocumentsManager
-        apiFetch={apiFetch}
-        activeTenantId={activeTenantId}
-        entityType={null}
-        entityId={null}
-        entityNbr=""
-        defaultInsuredName=""
-        title="Enterprise Document Repository"
-      />
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs value={docTab} onChange={(e, v) => setDocTab(v)}>
+          <Tab
+            icon={<Inbox size={16} />}
+            iconPosition="start"
+            label="Incoming Documents Inbox"
+            sx={{ fontWeight: 600, textTransform: 'none' }}
+          />
+          <Tab
+            icon={<Printer size={16} />}
+            iconPosition="start"
+            label="Policy & Submission Repository"
+            sx={{ fontWeight: 600, textTransform: 'none' }}
+          />
+        </Tabs>
+      </Box>
+
+      {docTab === 0 && (
+        <IncomingDocumentsView
+          apiFetch={apiFetch}
+          activeTenantId={activeTenantId}
+          activeRole={activeRole}
+          onNavigate={onNavigate}
+        />
+      )}
+
+      {docTab === 1 && (
+        <DocumentsManager
+          apiFetch={apiFetch}
+          activeTenantId={activeTenantId}
+          entityType={null}
+          entityId={null}
+          entityNbr=""
+          defaultInsuredName=""
+          title="Enterprise Document Repository"
+        />
+      )}
     </Box>
   );
 };
@@ -4797,6 +5967,7 @@ export default function App() {
 
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutGrid size={18} /> },
+    { id: 'inbox', label: 'Document Inbox', icon: <Inbox size={18} /> },
     { id: 'policy', label: 'Policies', icon: <FileText size={18} /> },
     { id: 'submissions', label: 'Submissions', icon: <Files size={18} /> },
     { id: 'quotes', label: 'Quotes & Rating', icon: <Calculator size={18} /> },
@@ -4818,7 +5989,7 @@ export default function App() {
   );
 
   const navItems = allNavItems.filter(
-    (item) => item.id === 'dashboard' || item.id === 'quotes' || item.id === 'documents' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
+    (item) => item.id === 'dashboard' || item.id === 'inbox' || item.id === 'quotes' || item.id === 'documents' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
   );
 
   useEffect(() => {
@@ -4839,6 +6010,8 @@ export default function App() {
             onNavigate={setActiveView}
           />
         );
+      case 'inbox':
+        return <IncomingDocumentsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
       case 'policy':
         return <PoliciesView apiFetch={apiFetch} activeTenantId={activeTenantId} />;
       case 'submissions':
@@ -4865,9 +6038,11 @@ export default function App() {
   const getBreadcrumb = () => {
     const map = {
       dashboard: 'Dashboard',
+      inbox: 'Document Intake Inbox & Queue',
       policy: 'Policies',
       submissions: 'Submissions',
       quotes: 'Quotes & Rating',
+      documents: 'Documents & Intake Center',
       claims: 'Claims'
     };
     return map[activeView] || 'Dashboard';
