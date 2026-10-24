@@ -226,6 +226,24 @@ function MemoryBar({ usedMb, totalMb, maxMb }) {
   );
 }
 
+
+const resolveServiceIcon = (iconName, color = '#38bdf8', size = 22) => {
+  const iconProps = { size, color };
+  switch ((iconName || '').toLowerCase().trim()) {
+    case 'layers': return <Layers {...iconProps} />;
+    case 'shieldcheck': case 'shield': return <ShieldCheck {...iconProps} />;
+    case 'calculator': return <Calculator {...iconProps} />;
+    case 'filetext': case 'file': return <FileText {...iconProps} />;
+    case 'printer': return <Printer {...iconProps} />;
+    case 'cpu': return <Cpu {...iconProps} />;
+    case 'database': return <Database {...iconProps} />;
+    case 'harddrive': return <HardDrive {...iconProps} />;
+    case 'zap': return <Zap {...iconProps} />;
+    case 'activity': return <Activity {...iconProps} />;
+    default: return <Server {...iconProps} />;
+  }
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('tenants');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -235,13 +253,8 @@ export default function App() {
   const [diag, setDiag] = useState(null);
   const [diagRefreshing, setDiagRefreshing] = useState(false);
   const [autoRefreshDiag, setAutoRefreshDiag] = useState(false);
-  const [servicesDiag, setServicesDiag] = useState({
-    helios2: { loading: true, data: null, latency: null, error: null },
-    admin: { loading: true, data: null, latency: null, error: null },
-    rating: { loading: true, data: null, latency: null, error: null },
-    document: { loading: true, data: null, latency: null, error: null },
-    docgen: { loading: true, data: null, latency: null, error: null }
-  });
+  const [registeredServices, setRegisteredServices] = useState([]);
+  const [servicesDiag, setServicesDiag] = useState({});
   const [flash, setFlash] = useState(null);
 
   // Tenant Modal State
@@ -643,33 +656,51 @@ export default function App() {
     };
 
     try {
-      const [h2, adm, rat, doc, dgn] = await Promise.all([
-        pingService('/core-api/diagnostics'),
-        pingService('/api/diagnostics'),
-        pingService('/rating-api/diagnostics'),
-        pingService(`/document-api/documents/diagnostics?tenantId=${selectedTenantId || 1}`),
-        pingService('/docgen-api/diagnostics')
-      ]);
+      // 1. Dynamically load active service registry from MSTR_DATA DB
+      let services = [];
+      try {
+        const svcList = await apiFetch('/api/services');
+        if (Array.isArray(svcList) && svcList.length > 0) {
+          services = svcList;
+          setRegisteredServices(svcList);
+        }
+      } catch (err) {
+        console.warn('Failed to load services from MSTR_DATA, using existing state:', err);
+      }
 
-      setServicesDiag({
-        helios2: h2,
-        admin: adm,
-        rating: rat,
-        document: doc,
-        docgen: dgn
+      if (services.length === 0) {
+        services = registeredServices;
+      }
+
+      // 2. Dynamically ping each registered service route
+      const pingPromises = services.map(async (svc) => {
+        let route = svc.diagnosticsRoute;
+        if (svc.requiresTenant && selectedTenantId) {
+          route += (route.includes('?') ? '&' : '?') + `tenantId=${selectedTenantId}`;
+        }
+        const diagResult = await pingService(route);
+        return { key: svc.serviceKey, result: diagResult };
       });
 
-      if (adm.data) {
-        setDiag(adm.data);
-      } else if (h2.data) {
-        setDiag(h2.data);
+      const results = await Promise.all(pingPromises);
+      const newDiagMap = {};
+      results.forEach(item => {
+        newDiagMap[item.key] = item.result;
+      });
+
+      setServicesDiag(newDiagMap);
+
+      if (newDiagMap.admin?.data) {
+        setDiag(newDiagMap.admin.data);
+      } else if (newDiagMap.helios2?.data) {
+        setDiag(newDiagMap.helios2.data);
       }
     } catch (err) {
       setFlash({ type: 'error', text: `Failed to refresh diagnostics: ${err.message}` });
     } finally {
       setDiagRefreshing(false);
     }
-  }, [apiFetch, selectedTenantId]);
+  }, [apiFetch, selectedTenantId, registeredServices]);
 
   useEffect(() => {
     if (!autoRefreshDiag) return;
@@ -1501,68 +1532,18 @@ export default function App() {
 
               {/* TAB 3: SERVICES STATUS & PERFORMANCE METRICS */}
               {activeTab === 'diagnostics' && (() => {
-                const serviceList = [
-                  {
-                    id: 'helios2',
-                    title: 'Helios2 Core Policy & Claims',
-                    shortName: 'Helios2 Core',
-                    serviceDesc: 'Policy lifecycle, submissions intake, claims & dynamic multi-tenant routing',
-                    port: '8080',
-                    windowsService: 'Tomcat11',
-                    route: '/core-api/diagnostics',
-                    color: '#4c0519',
-                    icon: <Layers size={22} color="#fb7185" />,
-                    diag: servicesDiag.helios2
-                  },
-                  {
-                    id: 'admin',
-                    title: 'HeliosAdmin Control Plane',
-                    shortName: 'HeliosAdmin',
-                    serviceDesc: 'Multi-tenant branding, role definitions, identity & ACL management',
-                    port: '8082',
-                    windowsService: 'Tomcat11Admin',
-                    route: '/api/diagnostics',
-                    color: '#0f172a',
-                    icon: <ShieldCheck size={22} color="#38bdf8" />,
-                    diag: servicesDiag.admin
-                  },
-                  {
-                    id: 'rating',
-                    title: 'HeliosRating Rules & SERFF Engine',
-                    shortName: 'HeliosRating',
-                    serviceDesc: 'Multi-state statutory filings, schedule caps & rating algorithms',
-                    port: '8084',
-                    windowsService: 'Tomcat11Rating',
-                    route: '/rating-api/diagnostics',
-                    color: '#0284c7',
-                    icon: <Calculator size={22} color="#38bdf8" />,
-                    diag: servicesDiag.rating
-                  },
-                  {
-                    id: 'document',
-                    title: 'HeliosDocument Repository & Lifecycle',
-                    shortName: 'HeliosDocument',
-                    serviceDesc: 'SQL Server metadata tracking, disk storage, retrieval, preview & lifecycle',
-                    port: '8086',
-                    windowsService: 'Tomcat11Document',
-                    route: '/document-api/documents/diagnostics',
-                    color: '#7c3aed',
-                    icon: <FileText size={22} color="#c084fc" />,
-                    diag: servicesDiag.document
-                  },
-                  {
-                    id: 'docgen',
-                    title: 'HeliosDocgen Dedicated PDF Engine',
-                    shortName: 'HeliosDocgen',
-                    serviceDesc: 'Isolated high-performance Aspose.PDF generation engine (Dec pages, binders, proposals)',
-                    port: '8088',
-                    windowsService: 'Tomcat11Docgen',
-                    route: '/docgen-api/diagnostics',
-                    color: '#d97706',
-                    icon: <Printer size={22} color="#fbbf24" />,
-                    diag: servicesDiag.docgen
-                  }
-                ];
+                const serviceList = registeredServices.map((svc) => ({
+                  id: svc.serviceKey,
+                  title: svc.displayName,
+                  shortName: svc.shortName,
+                  serviceDesc: svc.serviceDesc,
+                  port: String(svc.port),
+                  windowsService: svc.windowsService,
+                  route: svc.diagnosticsRoute,
+                  color: svc.uiColor || '#0284c7',
+                  icon: resolveServiceIcon(svc.uiIcon, svc.uiColor ? '#38bdf8' : undefined),
+                  diag: servicesDiag[svc.serviceKey] || { loading: diagRefreshing, data: null, latency: null, error: null }
+                }));
 
                 const onlineCount = serviceList.filter(s => s.diag?.data && !s.diag?.error).length;
                 const latencies = serviceList.filter(s => s.diag?.latency != null).map(s => s.diag.latency);
@@ -1575,11 +1556,18 @@ export default function App() {
                     {/* Header */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
                       <Box>
-                        <Typography variant="h4" sx={{ fontSize: '1.65rem', mb: 0.4 }}>
-                          Platform Topology &amp; Service Diagnostics
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.4 }}>
+                          <Typography variant="h4" sx={{ fontSize: '1.65rem' }}>
+                            Platform Topology &amp; Service Diagnostics
+                          </Typography>
+                          <Chip
+                            label="Dynamic MSTR_DATA Registry"
+                            size="small"
+                            sx={{ height: 22, fontSize: '0.7rem', fontWeight: 700, bgcolor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }}
+                          />
+                        </Box>
                         <Typography variant="body2" sx={{ color: '#64748b' }}>
-                          Real-time health telemetry, round-trip latency, JVM heap allocation, and database connectivity across all 5 microservices
+                          Real-time health telemetry, round-trip latency, JVM heap allocation, and database connectivity across all {serviceList.length} microservices dynamically loaded from MSTR_DATA
                         </Typography>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>

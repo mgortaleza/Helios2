@@ -51,3 +51,4 @@ echo   - Deploy WAR to : %DOCGEN_TOMCAT%\webapps\helios-docgen.war
 echo   - Next Step     : Run install-docgen-service.bat as Administrator
 echo ============================================================================
 endlocal
+

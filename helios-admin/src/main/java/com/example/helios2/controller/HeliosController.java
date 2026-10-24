@@ -20,6 +20,8 @@ import com.example.helios2.service.HeliosService.PartyDto;
 import com.example.helios2.service.HeliosService.PolicyDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
 import com.example.helios2.service.HeliosService.TaskDto;
+import com.example.helios2.service.ServiceRegistryService;
+import com.example.helios2.service.ServiceRegistryService.ServiceCatalogDto;
 import com.example.helios2.service.TenantRegistryService;
 import com.example.helios2.tenant.TenantConfig;
 import com.example.helios2.tenant.TenantContext;
@@ -30,16 +32,30 @@ import com.example.helios2.tenant.TenantRoutingDataSource;
 public class HeliosController {
 
     private final TenantRegistryService tenantRegistryService;
+    private final ServiceRegistryService serviceRegistryService;
     private final HeliosService heliosService;
     private final TenantRoutingDataSource tenantRoutingDataSource;
 
     public HeliosController(
             TenantRegistryService tenantRegistryService,
+            ServiceRegistryService serviceRegistryService,
             HeliosService heliosService,
             TenantRoutingDataSource tenantRoutingDataSource) {
         this.tenantRegistryService = tenantRegistryService;
+        this.serviceRegistryService = serviceRegistryService;
         this.heliosService = heliosService;
         this.tenantRoutingDataSource = tenantRoutingDataSource;
+    }
+
+    @GetMapping("/services")
+    public List<ServiceCatalogDto> getServices() {
+        return serviceRegistryService.getActiveServices();
+    }
+
+    @PostMapping("/services")
+    public ResponseEntity<ServiceCatalogDto> saveService(@RequestBody ServiceCatalogDto serviceDto) {
+        ServiceCatalogDto saved = serviceRegistryService.saveService(serviceDto);
+        return ResponseEntity.ok(saved);
     }
 
     @GetMapping("/tenants")
