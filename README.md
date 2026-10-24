@@ -49,6 +49,28 @@
 
 ---
 
+## Business Rules Management System (BRMS) & Rule Flow Studio
+
+Helios Suite features an enterprise-grade visual Rule Flow Visualizer & Execution Platform modeled after FICO Blaze Advisor and Red Hat Drools.
+
+- **Visual Orchestrator (`HeliosAdmin:8090`)**: React Flow canvas with custom nodes (`RULESET`, `CONDITIONAL_SWITCH`, `DECISION_TABLE`, `UI_ADJUSTMENT`), topological validation (Kahn's cycle detection), and simulation drawers.
+- **Coordinate-Based Decision Matrix**: Coordinate relational model ($Row \times Column \rightarrow Cell$) with custom insurance mathematical range parser (`[Min..Max]`, `< / >`, `<= / >=`).
+- **Live Portal Rating Integration (`Helios2:80`)**: `RatingQuoteDialog` features dual-engine execution, auto-matching active RuleFlows by product/plan code and persisting microsecond audit trails to `dbo.UW_QUOTE`.
+- **Comprehensive Training Manual**: See [`docs/RULE_FLOW_STUDIO_TRAINING_GUIDE.md`](docs/RULE_FLOW_STUDIO_TRAINING_GUIDE.md) for detailed tutorials, architectural diagrams, MVEL cheat sheets, and hands-on labs.
+
+### BRMS REST Endpoints (`/api/brms/`)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/brms/flows` | Lists RuleFlows, optional `?productCode=` filter. |
+| `POST` | `/api/brms/flows` | Creates a new RuleFlow with starter nodes and layout. |
+| `GET` | `/api/brms/flows/{id}` | Fetches full RuleFlow definition with nodes, edges, coordinate tables, and layout. |
+| `PUT` | `/api/brms/flows/{id}` | Updates flow metadata, product/plan associations, and status. |
+| `POST` | `/api/brms/flows/{id}/execute` | Executes a specific flow against input facts with audit snapshot trail. |
+| `POST` | `/api/brms/execute-by-plan` | Resolves and executes the active flow matching `{ productCode, planCode }`. |
+| `POST` | `/api/brms/validate` | Runs Kahn's topological sort for loop detection and DAG validation. |
+
+---
+
 ## Running Locally
 
 ### Backend (Spring Boot on port `8081`)
