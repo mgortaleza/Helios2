@@ -30,3 +30,4 @@ sc.exe \\10.1.10.56 start Tomcat11Rating
 Start-Sleep -Seconds 4
 sc.exe \\10.1.10.56 query Tomcat11Rating
 Write-Host "Tomcat11Rating updated successfully!"
+

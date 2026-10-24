@@ -245,3 +245,4 @@ BEGIN
     PRINT 'Created dbo.RuleFlowExecutionAuditSteps in HELIOS_RATING_DB';
 END;
 GO
+
