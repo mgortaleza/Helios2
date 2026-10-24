@@ -42,7 +42,9 @@ import {
   InputLabel,
   Card,
   CardContent,
-  CardActions
+  CardActions,
+  Switch,
+  FormControlLabel
 } from '@mui/material';
 
 import {
@@ -70,7 +72,13 @@ import {
   ExternalLink,
   ShieldCheck,
   Calculator,
-  X
+  X,
+  Workflow,
+  GitBranch,
+  Copy,
+  Edit3,
+  Filter,
+  Search
 } from 'lucide-react';
 
 // ============================================================================
@@ -231,6 +239,19 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
   const [matrixModalOpen, setMatrixModalOpen] = useState(false);
   const [activeMatrixData, setActiveMatrixData] = useState(null);
 
+  // Catalog Filter & Search State
+  const [catalogProductFilter, setCatalogProductFilter] = useState('ALL');
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
+
+  // Version Cloning Modal State
+  const [cloneModalOpen, setCloneModalOpen] = useState(false);
+  const [cloneTargetFlow, setCloneTargetFlow] = useState(null);
+  const [cloneForm, setCloneForm] = useState({
+    requestedVersion: 2,
+    description: '',
+    status: 'DRAFT'
+  });
+
   // Forms
   const [newFlowForm, setNewFlowForm] = useState({
     flowCode: '',
@@ -284,6 +305,200 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
     loadFlowList();
   }, [loadFlowList]);
 
+  // ============================================================================
+  // DECISION MATRIX DATA NORMALIZATION & GRID CONTROLS
+  // ============================================================================
+  const normalizeMatrixData = useCallback((dt) => {
+    if (!dt) return null;
+    const cols = (dt.columns || []).map((c, idx) => ({
+      columnId: c.columnId || c.ColumnId || (idx + 1),
+      columnType: c.columnType || c.ColumnType || 'CONDITION',
+      attributeKey: c.attributeKey || c.AttributeKey || `attr_${idx + 1}`,
+      displayName: c.displayName || c.DisplayName || `Column ${idx + 1}`,
+      dataType: c.dataType || c.DataType || 'STRING',
+      displayOrder: c.displayOrder || c.DisplayOrder || (idx + 1)
+    }));
+
+    const rawRows = dt.rows || [];
+    const rawCells = dt.cells || [];
+    const cellLookup = {};
+    rawCells.forEach(cell => {
+      const rId = cell.rowId || cell.RowId;
+      const cId = cell.columnId || cell.ColumnId;
+      cellLookup[`${rId}_${cId}`] = cell.expressionValue !== undefined ? cell.expressionValue : cell.ExpressionValue || '-';
+    });
+
+    const rows = rawRows.map(r => {
+      const rId = r.rowId || r.RowId;
+      let cellVals = r.cellValues ? { ...r.cellValues } : {};
+      cols.forEach(col => {
+        const cIdStr = String(col.columnId);
+        if (cellVals[cIdStr] === undefined) {
+          cellVals[cIdStr] = cellLookup[`${rId}_${col.columnId}`] || '-';
+        }
+      });
+      return {
+        rowId: rId,
+        rowIndex: r.rowIndex !== undefined ? r.rowIndex : r.RowIndex,
+        ruleDescription: r.ruleDescription || r.RuleDescription || '',
+        isActive: r.isActive !== undefined ? r.isActive : r.IsActive !== undefined ? r.IsActive : true,
+        cellValues: cellVals
+      };
+    });
+
+    return {
+      tableId: dt.tableId || dt.TableId,
+      nodeId: dt.nodeId || dt.NodeId,
+      tableCode: dt.tableCode || dt.TableCode,
+      tableName: dt.tableName || dt.TableName,
+      hitPolicy: dt.hitPolicy || dt.HitPolicy || 'FIRST_HIT',
+      aggregationField: dt.aggregationField || dt.AggregationField || '',
+      columns: cols,
+      rows: rows
+    };
+  }, []);
+
+  const openDecisionMatrixEditor = useCallback(async (tableRef) => {
+    const tableId = typeof tableRef === 'object' ? tableRef?.tableId || tableRef?.TableId : tableRef;
+    if (!tableId) {
+      if (typeof tableRef === 'object') {
+        setActiveMatrixData(normalizeMatrixData(tableRef));
+        setMatrixModalOpen(true);
+      }
+      return;
+    }
+    try {
+      const data = await apiFetch(`/api/brms/decision-tables/${tableId}`);
+      if (data && data.tableId) {
+        setActiveMatrixData(normalizeMatrixData(data));
+      } else {
+        setActiveMatrixData(normalizeMatrixData(tableRef));
+      }
+    } catch (err) {
+      console.warn('Could not fetch decision table directly, fallback to local object:', err);
+      setActiveMatrixData(normalizeMatrixData(tableRef));
+    }
+    setMatrixModalOpen(true);
+  }, [apiFetch, normalizeMatrixData]);
+
+  const handleSaveDecisionMatrix = async () => {
+    if (!activeMatrixData?.tableId) return;
+    try {
+      const updated = await apiFetch(`/api/brms/decision-tables/${activeMatrixData.tableId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(activeMatrixData)
+      });
+      setActiveMatrixData(normalizeMatrixData(updated || activeMatrixData));
+      setAlert({
+        type: 'success',
+        message: `Decision Matrix '${activeMatrixData.tableName || activeMatrixData.tableCode}' successfully saved to HELIOS_RATING_DB.`
+      });
+      if (flowData && flowData.decisionTables) {
+        const nextDt = flowData.decisionTables.map(t => (t.tableId || t.TableId) === activeMatrixData.tableId ? { ...t, ...activeMatrixData } : t);
+        setFlowData({ ...flowData, decisionTables: nextDt });
+      }
+      setMatrixModalOpen(false);
+    } catch (err) {
+      setAlert({ type: 'error', message: `Failed to save decision matrix: ${err.message}` });
+    }
+  };
+
+  const handleMatrixCellChange = (rowId, colId, value) => {
+    if (!activeMatrixData) return;
+    const nextRows = activeMatrixData.rows.map(r => {
+      if (r.rowId === rowId) {
+        return {
+          ...r,
+          cellValues: {
+            ...(r.cellValues || {}),
+            [String(colId)]: value
+          }
+        };
+      }
+      return r;
+    });
+    setActiveMatrixData({ ...activeMatrixData, rows: nextRows });
+  };
+
+  const handleMatrixRowDescChange = (rowId, desc) => {
+    if (!activeMatrixData) return;
+    const nextRows = activeMatrixData.rows.map(r => r.rowId === rowId ? { ...r, ruleDescription: desc } : r);
+    setActiveMatrixData({ ...activeMatrixData, rows: nextRows });
+  };
+
+  const handleMatrixRowActiveToggle = (rowId) => {
+    if (!activeMatrixData) return;
+    const nextRows = activeMatrixData.rows.map(r => r.rowId === rowId ? { ...r, isActive: !r.isActive } : r);
+    setActiveMatrixData({ ...activeMatrixData, rows: nextRows });
+  };
+
+  const handleAddMatrixRow = () => {
+    if (!activeMatrixData) return;
+    const currentRows = activeMatrixData.rows || [];
+    const maxIndex = currentRows.reduce((max, r) => Math.max(max, r.rowIndex || 0), 0);
+    const newRowId = -1 * (currentRows.length + 1);
+    const defaultCells = {};
+    (activeMatrixData.columns || []).forEach(col => {
+      defaultCells[String(col.columnId)] = '-';
+    });
+    const newRow = {
+      rowId: newRowId,
+      rowIndex: maxIndex + 1,
+      ruleDescription: 'New Matrix Business Rule',
+      isActive: true,
+      cellValues: defaultCells
+    };
+    setActiveMatrixData({ ...activeMatrixData, rows: [...currentRows, newRow] });
+  };
+
+  const handleDeleteMatrixRow = async (rowId) => {
+    if (!activeMatrixData) return;
+    if (rowId > 0 && activeMatrixData.tableId) {
+      try {
+        await apiFetch(`/api/brms/decision-tables/${activeMatrixData.tableId}/rows/${rowId}`, { method: 'DELETE' });
+      } catch (err) {
+        console.warn('Failed remote delete of row:', err);
+      }
+    }
+    const nextRows = activeMatrixData.rows.filter(r => r.rowId !== rowId);
+    setActiveMatrixData({ ...activeMatrixData, rows: nextRows });
+  };
+
+  const handleOpenCloneModal = (targetFlow) => {
+    const src = targetFlow || flowData?.header;
+    if (!src) return;
+    setCloneTargetFlow(src);
+    setCloneForm({
+      requestedVersion: (src.version || 1) + 1,
+      description: `Cloned from v${src.version || 1}: Updated underwriting logic and rating factors`,
+      status: 'DRAFT'
+    });
+    setCloneModalOpen(true);
+  };
+
+  const handleSaveCloneVersion = async () => {
+    if (!cloneTargetFlow?.flowId) return;
+    try {
+      const cloned = await apiFetch(`/api/brms/flows/${cloneTargetFlow.flowId}/clone-version`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cloneForm)
+      });
+      setCloneModalOpen(false);
+      setAlert({
+        type: 'success',
+        message: `Successfully created new version v${cloned.version} (${cloned.flowCode}) in HELIOS_RATING_DB.`
+      });
+      await loadFlowList();
+      if (selectedFlowId) {
+        loadFlowDetails(cloned.flowId);
+      }
+    } catch (err) {
+      setAlert({ type: 'error', message: `Failed to clone flow version: ${err.message}` });
+    }
+  };
+
   // 2. Load Selected Flow Full Graph onto Canvas
   const loadFlowDetails = useCallback(async (id) => {
     setIsLoading(true);
@@ -304,9 +519,8 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
               data: {
                 ...n.data,
                 onOpenMatrix: () => {
-                  const dt = (data.decisionTables || []).find(t => t.nodeId === n.data?.dbNodeId) || (data.decisionTables || [])[0];
-                  setActiveMatrixData(dt);
-                  setMatrixModalOpen(true);
+                  const dt = (data.decisionTables || []).find(t => (t.nodeId || t.NodeId) === n.data?.dbNodeId) || (data.decisionTables || [])[0];
+                  openDecisionMatrixEditor(dt);
                 }
               }
             }));
@@ -345,9 +559,8 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
             hitPolicy: n.nodeType === 'DECISION_TABLE' ? 'FIRST_HIT' : undefined,
             rowCount: 4,
             onOpenMatrix: () => {
-              const dt = (data.decisionTables || []).find(t => t.nodeId === n.nodeId) || (data.decisionTables || [])[0];
-              setActiveMatrixData(dt);
-              setMatrixModalOpen(true);
+              const dt = (data.decisionTables || []).find(t => (t.nodeId || t.NodeId) === n.nodeId) || (data.decisionTables || [])[0];
+              openDecisionMatrixEditor(dt);
             }
           }
         };
@@ -406,12 +619,12 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
       };
 
       await apiFetch(`/api/brms/flows/${selectedFlowId}/layout`, {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(layoutPayload)
       });
 
-      setAlert({ type: 'success', message: `Visual canvas state successfully saved to MSTR_DATA for Flow #${selectedFlowId}.` });
+      setAlert({ type: 'success', message: `Visual canvas state successfully saved to HELIOS_RATING_DB for Flow #${selectedFlowId}.` });
     } catch (err) {
       setAlert({ type: 'error', message: `Failed to save visual layout: ${err.message}` });
     }
@@ -644,107 +857,192 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
           </Grid>
         </Grid>
 
-        {/* Flows Grid Cards */}
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <GitFork size={18} color="#0284c7" />
-          Configured RuleFlow Engines &amp; Workflows:
-        </Typography>
+        {/* Search, Filter Toolbar & Flow Catalog Table */}
+        <Box sx={{ mb: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <GitFork size={20} color="#0284c7" />
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#0f172a' }}>
+              Configured RuleFlow Engines &amp; Workflows:
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+            <TextField
+              size="small"
+              placeholder="Search flows by code, name, description..."
+              value={catalogSearchQuery}
+              onChange={(e) => setCatalogSearchQuery(e.target.value)}
+              InputProps={{
+                startAdornment: <Search size={16} color="#94a3b8" style={{ marginRight: 8 }} />
+              }}
+              sx={{ minWidth: 280 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel>Filter by Product Line</InputLabel>
+              <Select
+                label="Filter by Product Line"
+                value={catalogProductFilter}
+                onChange={(e) => setCatalogProductFilter(e.target.value)}
+              >
+                <MenuItem value="ALL">All Product Lines</MenuItem>
+                {AVAILABLE_PRODUCTS.map((p) => (
+                  <MenuItem key={p.code} value={p.code}>
+                    {p.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+        </Box>
 
-        <Grid container spacing={2.5}>
-          {flows.map((flow) => {
-            const prodName = AVAILABLE_PRODUCTS.find(p => p.code === flow.productCode)?.name || flow.productCode || 'Unassigned Product';
-            const planName = AVAILABLE_PLANS.find(p => p.code === flow.planCode)?.name || flow.planCode || 'Default Rating Plan';
+        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', mb: 4 }}>
+          <Table size="small">
+            <TableHead sx={{ bgcolor: '#f8fafc' }}>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5 }}>Flow Code &amp; ID</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5 }}>Workflow Engine Name &amp; Description</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5, textAlign: 'center' }}>Version</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5 }}>Product Line</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5 }}>Rating Plan</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5, textAlign: 'center' }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5 }}>Last Updated</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#475569', py: 1.5, textAlign: 'right' }}>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {flows
+                .filter((flow) => {
+                  if (catalogProductFilter !== 'ALL' && flow.productCode !== catalogProductFilter) {
+                    return false;
+                  }
+                  if (catalogSearchQuery.trim()) {
+                    const q = catalogSearchQuery.toLowerCase();
+                    const code = (flow.flowCode || '').toLowerCase();
+                    const name = (flow.flowName || '').toLowerCase();
+                    const desc = (flow.description || '').toLowerCase();
+                    const plan = (flow.planCode || '').toLowerCase();
+                    return code.includes(q) || name.includes(q) || desc.includes(q) || plan.includes(q);
+                  }
+                  return true;
+                })
+                .map((flow) => {
+                  const prodName = AVAILABLE_PRODUCTS.find(p => p.code === flow.productCode)?.name || flow.productCode || 'Unassigned Product';
+                  const planName = AVAILABLE_PLANS.find(p => p.code === flow.planCode)?.name || flow.planCode || 'Default Rating Plan';
 
-            return (
-              <Grid key={flow.flowId} size={{ xs: 12, md: 6, lg: 6 }}>
-                <Card
-                  elevation={0}
-                  sx={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '10px',
-                    transition: 'all 0.2s ease',
-                    '&:hover': { borderColor: '#0284c7', boxShadow: '0 4px 12px rgba(2, 132, 199, 0.08)' }
-                  }}
-                >
-                  <CardContent sx={{ p: 2.5 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                      <Box>
-                        <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.05rem', color: '#0f172a' }}>
+                  return (
+                    <TableRow key={flow.flowId} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
+                      <TableCell sx={{ verticalAlign: 'top', py: 1.5 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 800, fontFamily: 'monospace', color: '#0f172a' }}>
+                          {flow.flowCode}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                          Flow ID #{flow.flowId}
+                        </Typography>
+                      </TableCell>
+
+                      <TableCell sx={{ verticalAlign: 'top', maxWidth: 340, py: 1.5 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a', mb: 0.3 }}>
                           {flow.flowName}
                         </Typography>
-                        <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#64748b', fontWeight: 600 }}>
-                          {flow.flowCode} &bull; Flow ID #{flow.flowId} (v{flow.version})
+                        <Typography variant="caption" sx={{ color: '#64748b', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                          {flow.description || 'Custom insurance rating workflow and business rules graph.'}
                         </Typography>
-                      </Box>
-                      <Chip
-                        label={flow.status}
-                        size="small"
-                        sx={{
-                          fontWeight: 700,
-                          fontSize: '0.72rem',
-                          bgcolor: flow.status === 'ACTIVE' ? '#dcfce7' : '#fef3c7',
-                          color: flow.status === 'ACTIVE' ? '#15803d' : '#b45309'
-                        }}
-                      />
-                    </Box>
+                      </TableCell>
 
-                    <Typography variant="body2" sx={{ color: '#475569', fontSize: '0.84rem', mb: 2, minHeight: 40, lineHeight: 1.45 }}>
-                      {flow.description || 'Custom insurance rating workflow and business rules graph.'}
-                    </Typography>
+                      <TableCell sx={{ verticalAlign: 'top', textAlign: 'center', py: 1.5 }}>
+                        <Chip
+                          label={`v${flow.version || 1}`}
+                          size="small"
+                          sx={{
+                            fontWeight: 700,
+                            fontSize: '0.72rem',
+                            bgcolor: '#ede9fe',
+                            color: '#6d28d9'
+                          }}
+                        />
+                      </TableCell>
 
-                    {/* Associated Product & Rating Plan Badges */}
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2, pt: 1.5, borderTop: '1px solid #f1f5f9' }}>
-                      <Chip
-                        icon={<ShieldCheck size={14} />}
-                        label={`Product: ${prodName}`}
-                        size="small"
-                        sx={{ bgcolor: '#e0f2fe', color: '#0369a1', fontWeight: 600, fontSize: '0.74rem' }}
-                      />
-                      <Chip
-                        icon={<Calculator size={14} />}
-                        label={`Plan: ${planName}`}
-                        size="small"
-                        variant="outlined"
-                        sx={{ borderColor: '#cbd5e1', color: '#334155', fontWeight: 600, fontSize: '0.74rem' }}
-                      />
-                    </Box>
+                      <TableCell sx={{ verticalAlign: 'top', py: 1.5 }}>
+                        <Chip
+                          icon={<ShieldCheck size={13} />}
+                          label={prodName}
+                          size="small"
+                          sx={{ bgcolor: '#e0f2fe', color: '#0369a1', fontWeight: 600, fontSize: '0.72rem' }}
+                        />
+                      </TableCell>
 
-                    <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>
-                      Last Updated: {flow.updatedDt || 'Recently'}
-                    </Typography>
-                  </CardContent>
+                      <TableCell sx={{ verticalAlign: 'top', py: 1.5 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600, color: '#334155' }}>
+                          {planName}
+                        </Typography>
+                      </TableCell>
 
-                  <Divider />
+                      <TableCell sx={{ verticalAlign: 'top', textAlign: 'center', py: 1.5 }}>
+                        <Chip
+                          label={flow.status}
+                          size="small"
+                          sx={{
+                            fontWeight: 700,
+                            fontSize: '0.7rem',
+                            bgcolor: flow.status === 'ACTIVE' ? '#dcfce7' : '#fef3c7',
+                            color: flow.status === 'ACTIVE' ? '#15803d' : '#b45309'
+                          }}
+                        />
+                      </TableCell>
 
-                  <CardActions sx={{ px: 2.5, py: 1.5, justifyContent: 'space-between', bgcolor: '#f8fafc' }}>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="primary"
-                      startIcon={<FolderOpen size={16} />}
-                      onClick={() => loadFlowDetails(flow.flowId)}
-                      sx={{ fontWeight: 700 }}
-                    >
-                      Open in Visual Studio
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<Play size={14} color="#16a34a" />}
-                      onClick={() => {
-                        setSelectedFlowId(flow.flowId);
-                        setSimulationOpen(true);
-                      }}
-                      sx={{ fontSize: '0.78rem' }}
-                    >
-                      Quick Test
-                    </Button>
-                  </CardActions>
-                </Card>
-              </Grid>
-            );
-          })}
-        </Grid>
+                      <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap', py: 1.5 }}>
+                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                          {flow.updatedDt || 'Recently'}
+                        </Typography>
+                      </TableCell>
+
+                      <TableCell sx={{ verticalAlign: 'top', textAlign: 'right', py: 1.5 }}>
+                        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="primary"
+                            startIcon={<Workflow size={15} />}
+                            onClick={() => loadFlowDetails(flow.flowId)}
+                            sx={{ fontWeight: 700, textTransform: 'none', px: 1.5 }}
+                          >
+                            Flow Studio
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<GitBranch size={14} />}
+                            onClick={() => handleOpenCloneModal(flow)}
+                            sx={{ fontWeight: 600, textTransform: 'none', borderColor: '#cbd5e1', color: '#475569' }}
+                          >
+                            New Version
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Play size={14} color="#16a34a" />}
+                            onClick={() => {
+                              setSelectedFlowId(flow.flowId);
+                              setSimulationOpen(true);
+                            }}
+                            sx={{ fontWeight: 600, textTransform: 'none', borderColor: '#cbd5e1', color: '#16a34a' }}
+                          >
+                            Quick Test
+                          </Button>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              {flows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} sx={{ textAlign: 'center', py: 4, color: '#64748b' }}>
+                    No ruleflows registered for tenant. Click "Create New Rule Flow" to begin.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
 
         {/* DIALOG: CREATE NEW RULEFLOW */}
         <Dialog open={createModalOpen} onClose={() => setCreateModalOpen(false)} maxWidth="sm" fullWidth>
@@ -826,6 +1124,67 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
             <Button onClick={() => setCreateModalOpen(false)}>Cancel</Button>
             <Button variant="contained" color="primary" onClick={handleCreateNewFlow} startIcon={<Plus size={16} />}>
               Create &amp; Launch Studio
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* DIALOG: CLONE FLOW AS NEW VERSION */}
+        <Dialog open={cloneModalOpen} onClose={() => setCloneModalOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <GitBranch size={20} color="#6d28d9" />
+            Save as New Version / Branch Flow
+          </DialogTitle>
+          <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 2 }}>
+            <Alert severity="info" sx={{ fontSize: '0.82rem' }}>
+              Cloning will replicate the entire graph topology, MVEL scripts, canvas layout coordinates, and all coordinate Decision Tables with their columns, rows, and cell matrices into <strong>HELIOS_RATING_DB</strong> under a new version tag.
+            </Alert>
+            <TextField
+              label="Source Flow"
+              fullWidth
+              size="small"
+              disabled
+              value={`${cloneTargetFlow?.flowCode || ''} (Current v${cloneTargetFlow?.version || 1})`}
+            />
+            <TextField
+              label="New Version Number"
+              fullWidth
+              size="small"
+              type="number"
+              value={cloneForm.requestedVersion}
+              onChange={(e) => setCloneForm({ ...cloneForm, requestedVersion: parseInt(e.target.value) || 1 })}
+              helperText="Incremented integer version identifier"
+            />
+            <TextField
+              label="Version Release Notes / Description"
+              fullWidth
+              multiline
+              rows={2}
+              size="small"
+              value={cloneForm.description}
+              onChange={(e) => setCloneForm({ ...cloneForm, description: e.target.value })}
+              placeholder="e.g. v2: Updated actuarial factors for state filings, refined credit score tiers..."
+            />
+            <FormControl fullWidth size="small">
+              <InputLabel>Initial Lifecycle Status</InputLabel>
+              <Select
+                label="Initial Lifecycle Status"
+                value={cloneForm.status}
+                onChange={(e) => setCloneForm({ ...cloneForm, status: e.target.value })}
+              >
+                <MenuItem value="DRAFT">DRAFT (Recommended for new versions in design/review)</MenuItem>
+                <MenuItem value="ACTIVE">ACTIVE (Immediate Production Rating)</MenuItem>
+              </Select>
+            </FormControl>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, py: 2 }}>
+            <Button onClick={() => setCloneModalOpen(false)}>Cancel</Button>
+            <Button
+              variant="contained"
+              sx={{ bgcolor: '#6d28d9', '&:hover': { bgcolor: '#5b21b6' }, fontWeight: 700 }}
+              onClick={handleSaveCloneVersion}
+              startIcon={<GitBranch size={16} />}
+            >
+              Confirm &amp; Create Version
             </Button>
           </DialogActions>
         </Dialog>
@@ -950,6 +1309,16 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
             onClick={() => setSimulationOpen(true)}
           >
             Simulate Execution
+          </Button>
+
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<GitBranch size={16} />}
+            onClick={() => handleOpenCloneModal(flowData?.header)}
+            sx={{ fontWeight: 700, borderColor: '#cbd5e1', color: '#334155' }}
+          >
+            Save as New Version
           </Button>
 
           <Button
@@ -1344,56 +1713,206 @@ export default function RuleFlowStudio({ apiFetch, selectedTenantId }) {
         </DialogActions>
       </Dialog>
 
-      {/* MODAL 2: 2D DECISION MATRIX VIEWER */}
-      <Dialog open={matrixModalOpen} onClose={() => setMatrixModalOpen(false)} maxWidth="lg" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <TableIcon size={20} color="#7c3aed" />
-          2D Decision Matrix: {activeMatrixData?.tableName || 'Coordinate Table'}
-        </DialogTitle>
-        <DialogContent dividers>
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
-            <Chip label={`Hit Policy: ${activeMatrixData?.hitPolicy || 'FIRST_HIT'}`} size="small" sx={{ bgcolor: '#ede9fe', color: '#6d28d9', fontWeight: 600 }} />
-            <Typography variant="caption" sx={{ color: '#64748b' }}>
-              Relational Matrix coordinate model (Rows &times; Columns crossing at Expression Cells).
+      {/* MODAL 2: 2D DECISION MATRIX EDITOR & VIEWER (Saved in Rating DB) */}
+      <Dialog open={matrixModalOpen} onClose={() => setMatrixModalOpen(false)} maxWidth="xl" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'space-between', pb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TableIcon size={22} color="#7c3aed" />
+            <Typography variant="h6" sx={{ fontWeight: 800, color: '#0f172a' }}>
+              Actuarial Decision Matrix Editor: {activeMatrixData?.tableName || 'Coordinate Table'}
             </Typography>
           </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Chip
+              label="HELIOS_RATING_DB.dbo.DecisionTables"
+              size="small"
+              sx={{ bgcolor: '#f1f5f9', color: '#475569', fontFamily: 'monospace', fontSize: '0.72rem' }}
+            />
+            <IconButton size="small" onClick={() => setMatrixModalOpen(false)}>
+              <X size={18} />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: 2.5 }}>
+          {/* Metadata Bar */}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2.5, flexWrap: 'wrap' }}>
+            <TextField
+              label="Matrix Table Name"
+              size="small"
+              value={activeMatrixData?.tableName || ''}
+              onChange={(e) => setActiveMatrixData({ ...activeMatrixData, tableName: e.target.value })}
+              sx={{ minWidth: 320 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Hit Evaluation Policy</InputLabel>
+              <Select
+                label="Hit Evaluation Policy"
+                value={activeMatrixData?.hitPolicy || 'FIRST_HIT'}
+                onChange={(e) => setActiveMatrixData({ ...activeMatrixData, hitPolicy: e.target.value })}
+              >
+                <MenuItem value="FIRST_HIT">FIRST_HIT (Sequential Priority)</MenuItem>
+                <MenuItem value="RULE_ORDER">RULE_ORDER (Multi-hit ordered)</MenuItem>
+                <MenuItem value="COLLECT_SUM">COLLECT_SUM (Sum all action outputs)</MenuItem>
+                <MenuItem value="COLLECT_MIN">COLLECT_MIN (Minimum action output)</MenuItem>
+                <MenuItem value="COLLECT_MAX">COLLECT_MAX (Maximum action output)</MenuItem>
+              </Select>
+            </FormControl>
+            <Chip
+              label={`Table Code: ${activeMatrixData?.tableCode || '-'}`}
+              size="small"
+              sx={{ fontFamily: 'monospace', fontWeight: 600 }}
+            />
+            <Button
+              variant="outlined"
+              size="small"
+              color="primary"
+              startIcon={<Plus size={15} />}
+              onClick={handleAddMatrixRow}
+              sx={{ ml: 'auto', fontWeight: 700 }}
+            >
+              Add Rule Row
+            </Button>
+          </Box>
 
-          <TableContainer component={Paper} variant="outlined">
-            <Table size="small">
-              <TableHead sx={{ bgcolor: '#f1f5f9' }}>
+          <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 480 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 700, width: 60 }}>#</TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Rule Description</TableCell>
-                  {activeMatrixData?.columns?.map((c) => (
-                    <TableCell key={c.ColumnId} sx={{ fontWeight: 700, color: c.ColumnType === 'ACTION' ? '#0d9488' : '#0284c7' }}>
-                      {c.DisplayName} ({c.ColumnType})
-                    </TableCell>
-                  ))}
+                  <TableCell sx={{ fontWeight: 800, width: 50, bgcolor: '#f8fafc' }}>#</TableCell>
+                  <TableCell sx={{ fontWeight: 800, width: 70, bgcolor: '#f8fafc', textAlign: 'center' }}>Active</TableCell>
+                  <TableCell sx={{ fontWeight: 800, minWidth: 240, bgcolor: '#f8fafc' }}>Rule Description / Actuarial Reason</TableCell>
+                  {activeMatrixData?.columns?.map((c) => {
+                    const isAction = c.columnType === 'ACTION' || c.ColumnType === 'ACTION';
+                    const colId = c.columnId || c.ColumnId;
+                    const dispName = c.displayName || c.DisplayName;
+                    const attrKey = c.attributeKey || c.AttributeKey;
+                    return (
+                      <TableCell
+                        key={colId}
+                        sx={{
+                          fontWeight: 800,
+                          minWidth: 160,
+                          bgcolor: isAction ? '#ecfdf5' : '#f0f9ff',
+                          color: isAction ? '#065f46' : '#0369a1',
+                          borderBottom: `2px solid ${isAction ? '#10b981' : '#0284c7'}`
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 800, fontSize: '0.78rem' }}>
+                            {dispName}
+                          </Typography>
+                          <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.68rem', display: 'block', opacity: 0.85 }}>
+                            {attrKey} ({isAction ? 'OUTPUT' : 'INPUT'})
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell sx={{ fontWeight: 800, width: 60, bgcolor: '#f8fafc', textAlign: 'center' }}>Delete</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {activeMatrixData?.rows?.map((r) => (
-                  <TableRow key={r.RowId} hover>
-                    <TableCell sx={{ fontWeight: 700 }}>{r.RowIndex}</TableCell>
-                    <TableCell>{r.RuleDescription}</TableCell>
-                    {activeMatrixData?.columns?.map((c) => {
-                      const cell = (activeMatrixData?.cells || []).find(
-                        (cl) => cl.RowId === r.RowId && cl.ColumnId === c.ColumnId
-                      );
-                      return (
-                        <TableCell key={c.ColumnId} sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                          {cell?.ExpressionValue || '-'}
-                        </TableCell>
-                      );
-                    })}
-                  </TableRow>
-                ))}
+                {activeMatrixData?.rows?.map((r) => {
+                  const rowId = r.rowId || r.RowId;
+                  const rowIdx = r.rowIndex || r.RowIndex;
+                  const rowDesc = r.ruleDescription || r.RuleDescription || '';
+                  const rowActive = r.isActive !== undefined ? r.isActive : r.IsActive !== undefined ? r.IsActive : true;
+                  return (
+                    <TableRow key={rowId} hover sx={{ opacity: rowActive ? 1 : 0.55 }}>
+                      <TableCell sx={{ fontWeight: 700, color: '#64748b' }}>{rowIdx}</TableCell>
+                      <TableCell sx={{ textAlign: 'center' }}>
+                        <Switch
+                          size="small"
+                          checked={!!rowActive}
+                          onChange={() => handleMatrixRowActiveToggle(rowId)}
+                          color="success"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          variant="standard"
+                          value={rowDesc}
+                          onChange={(e) => handleMatrixRowDescChange(rowId, e.target.value)}
+                          placeholder="Describe condition trigger..."
+                          InputProps={{ style: { fontSize: '0.82rem' } }}
+                        />
+                      </TableCell>
+                      {activeMatrixData?.columns?.map((c) => {
+                        const colId = c.columnId || c.ColumnId;
+                        const isAction = c.columnType === 'ACTION' || c.ColumnType === 'ACTION';
+                        const currentVal = r.cellValues ? r.cellValues[String(colId)] : '';
+                        return (
+                          <TableCell key={colId} sx={{ bgcolor: isAction ? '#f0fdf4' : '#fafafa' }}>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              variant="outlined"
+                              value={currentVal !== undefined ? currentVal : ''}
+                              onChange={(e) => handleMatrixCellChange(rowId, colId, e.target.value)}
+                              placeholder={isAction ? '1.000' : 'e.g. [0..5)'}
+                              InputProps={{
+                                style: {
+                                  fontSize: '0.8rem',
+                                  fontFamily: 'monospace',
+                                  fontWeight: 600,
+                                  color: isAction ? '#065f46' : '#0369a1'
+                                }
+                              }}
+                            />
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell sx={{ textAlign: 'center' }}>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleDeleteMatrixRow(rowId)}
+                          title="Delete Rule Row"
+                        >
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
+
+          <Box sx={{ mt: 2, p: 1.5, bgcolor: '#f8fafc', borderRadius: 1.5, border: '1px solid #e2e8f0', display: 'flex', gap: 3, alignItems: 'center' }}>
+            <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569' }}>
+              EXPRESSION SYNTAX GUIDE:
+            </Typography>
+            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#334155' }}>
+              Ranges: <code>[0..3)</code> &bull; <code>[650..720]</code>
+            </Typography>
+            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#334155' }}>
+              Inequalities: <code>&lt; 650</code> &bull; <code>&gt;= 720</code>
+            </Typography>
+            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#334155' }}>
+              Wildcard: <code>ANY</code> or <code>-</code>
+            </Typography>
+            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#334155' }}>
+              Outputs: <code>1.450</code> &bull; <code>"REFER_SENIOR_UW"</code>
+            </Typography>
+          </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setMatrixModalOpen(false)}>Close Matrix</Button>
+        <DialogActions sx={{ px: 3, py: 2, justifyContent: 'space-between', bgcolor: '#f8fafc' }}>
+          <Button onClick={() => setMatrixModalOpen(false)} color="inherit">
+            Cancel
+          </Button>
+          <Box sx={{ display: 'flex', gap: 1.5 }}>
+            <Button
+              variant="contained"
+              sx={{ bgcolor: '#7c3aed', '&:hover': { bgcolor: '#6d28d9' }, fontWeight: 700 }}
+              startIcon={<Save size={16} />}
+              onClick={handleSaveDecisionMatrix}
+            >
+              Save Matrix to Rating DB
+            </Button>
+          </Box>
         </DialogActions>
       </Dialog>
 

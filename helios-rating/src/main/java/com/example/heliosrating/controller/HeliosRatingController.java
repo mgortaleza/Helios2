@@ -48,6 +48,19 @@ public class HeliosRatingController {
         return ResponseEntity.ok(repository.getAllVersions());
     }
 
+    @PutMapping("/filings/{id}")
+    public ResponseEntity<RatePlanVersion> updateFiling(@PathVariable("id") int id, @RequestBody RatePlanVersion updated) {
+        updated.setVersionId(id);
+        RatePlanVersion saved = repository.updateVersion(updated);
+        return ResponseEntity.ok(saved);
+    }
+
+    @PostMapping("/filings")
+    public ResponseEntity<RatePlanVersion> createFiling(@RequestBody RatePlanVersion newVersion) {
+        RatePlanVersion saved = repository.createVersion(newVersion);
+        return ResponseEntity.ok(saved);
+    }
+
     @GetMapping("/diagnostics")
     public ResponseEntity<Map<String, Object>> getDiagnostics() {
         Runtime rt = Runtime.getRuntime();

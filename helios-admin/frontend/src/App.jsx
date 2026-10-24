@@ -435,6 +435,96 @@ export default function App() {
   const [sandboxResult, setSandboxResult] = useState(null);
   const [ratingLoading, setRatingLoading] = useState(false);
 
+  // State Filing Approval Metrics Edit State (Persisted in HELIOS_RATING_DB)
+  const [editFilingModalOpen, setEditFilingModalOpen] = useState(false);
+  const [selectedFiling, setSelectedFiling] = useState(null);
+  const [isSavingFiling, setIsSavingFiling] = useState(false);
+  const [filingForm, setFilingForm] = useState({
+    productCode: 'TECH_EO',
+    planCode: 'TECH_EO_COMMERCIAL',
+    stateCode: 'CA',
+    versionNumber: '2025.1',
+    serffTrackingNumber: '',
+    filingStatus: 'ACTIVE',
+    newBizEffectiveDate: '2025-01-01',
+    renewalEffectiveDate: '2025-01-01',
+    expirationDate: '',
+    minPremium: '2500.00',
+    maxScheduleDebitPct: '0.25',
+    maxScheduleCreditPct: '0.25',
+    description: ''
+  });
+
+  const handleOpenEditFiling = (filing) => {
+    setSelectedFiling(filing);
+    setFilingForm({
+      productCode: filing.productCode || 'TECH_EO',
+      planCode: filing.planCode || 'TECH_EO_COMMERCIAL',
+      stateCode: filing.stateCode || 'CA',
+      versionNumber: filing.versionNumber || '2025.1',
+      serffTrackingNumber: filing.serffTrackingNumber || '',
+      filingStatus: filing.filingStatus || 'ACTIVE',
+      newBizEffectiveDate: filing.newBizEffectiveDate || '2025-01-01',
+      renewalEffectiveDate: filing.renewalEffectiveDate || '2025-01-01',
+      expirationDate: filing.expirationDate || '',
+      minPremium: filing.minPremium !== undefined ? String(filing.minPremium) : '2500.00',
+      maxScheduleDebitPct: filing.maxScheduleDebitPct !== undefined ? String(filing.maxScheduleDebitPct) : '0.25',
+      maxScheduleCreditPct: filing.maxScheduleCreditPct !== undefined ? String(filing.maxScheduleCreditPct) : '0.25',
+      description: filing.description || ''
+    });
+    setEditFilingModalOpen(true);
+  };
+
+  const handleOpenCreateFiling = () => {
+    setSelectedFiling(null);
+    setFilingForm({
+      productCode: 'TECH_EO',
+      planCode: 'TECH_EO_COMMERCIAL',
+      stateCode: 'CA',
+      versionNumber: '2026.1',
+      serffTrackingNumber: `US-2026-${Math.floor(1000 + Math.random() * 9000)}-PL`,
+      filingStatus: 'ACTIVE',
+      newBizEffectiveDate: '2026-01-01',
+      renewalEffectiveDate: '2026-01-01',
+      expirationDate: '2028-12-31',
+      minPremium: '2500.00',
+      maxScheduleDebitPct: '0.25',
+      maxScheduleCreditPct: '0.25',
+      description: 'Department of Insurance Approved Rate Plan Filing'
+    });
+    setEditFilingModalOpen(true);
+  };
+
+  const handleSaveFiling = async (e) => {
+    if (e) e.preventDefault();
+    setIsSavingFiling(true);
+    try {
+      const url = selectedFiling?.versionId ? `/rating-api/filings/${selectedFiling.versionId}` : '/rating-api/filings';
+      const method = selectedFiling?.versionId ? 'PUT' : 'POST';
+      const payload = {
+        ...filingForm,
+        minPremium: parseFloat(filingForm.minPremium) || 0,
+        maxScheduleDebitPct: parseFloat(filingForm.maxScheduleDebitPct) || 0,
+        maxScheduleCreditPct: parseFloat(filingForm.maxScheduleCreditPct) || 0
+      };
+      const res = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      setEditFilingModalOpen(false);
+      await loadRatingData();
+    } catch (err) {
+      console.error('Failed to save filing to HELIOS_RATING_DB:', err);
+      alert(`Failed to save filing: ${err.message}`);
+    } finally {
+      setIsSavingFiling(false);
+    }
+  };
+
   const loadRatingData = useCallback(async () => {
     try {
       const fRes = await fetch('/rating-api/filings');
@@ -1965,7 +2055,19 @@ export default function App() {
                           Product rating versions resolved by State Department of Insurance rules &amp; effective dates
                         </Typography>
                       </Box>
-                      <Chip label="Multi-State SERFF Compliant" color="primary" size="small" sx={{ fontWeight: 600 }} />
+                      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          color="primary"
+                          startIcon={<Plus size={15} />}
+                          onClick={handleOpenCreateFiling}
+                          sx={{ fontWeight: 700, textTransform: 'none', fontSize: '0.75rem', bgcolor: '#0284c7' }}
+                        >
+                          New State Filing
+                        </Button>
+                        <Chip label="Multi-State SERFF Compliant" color="primary" size="small" sx={{ fontWeight: 600 }} />
+                      </Box>
                     </Box>
                     <TableContainer>
                       <Table size="small">
@@ -1979,6 +2081,7 @@ export default function App() {
                             <TableCell>Effective Date</TableCell>
                             <TableCell>Min Premium</TableCell>
                             <TableCell align="right">Max Sched Mod</TableCell>
+                            <TableCell align="right">Actions</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -2007,6 +2110,17 @@ export default function App() {
                               <TableCell sx={{ fontWeight: 600 }}>${Number(f.minPremium).toLocaleString()}</TableCell>
                               <TableCell align="right">
                                 &plusmn;{Math.round((f.maxScheduleDebitPct || 0.25) * 100)}%
+                              </TableCell>
+                              <TableCell align="right">
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  startIcon={<Edit2 size={13} />}
+                                  onClick={() => handleOpenEditFiling(f)}
+                                  sx={{ fontSize: '0.72rem', textTransform: 'none', py: 0.2, px: 1, borderColor: '#cbd5e1', color: '#0284c7', fontWeight: 600 }}
+                                >
+                                  Edit Metrics
+                                </Button>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -2570,6 +2684,201 @@ export default function App() {
               disabled={isSavingUser || !userForm.username || !userForm.displayName}
             >
               {isSavingUser ? 'Saving...' : userForm.userId > 0 ? 'Update User' : 'Create User'}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+      {/* DIALOG: EDIT STATE REGULATORY FILING & APPROVAL METRICS (Saved in HELIOS_RATING_DB) */}
+      <Dialog
+        open={editFilingModalOpen}
+        onClose={() => setEditFilingModalOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <form onSubmit={handleSaveFiling}>
+          <DialogTitle sx={{ fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Calculator size={20} color="#0284c7" />
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                {selectedFiling?.versionId ? `Edit State Filing Metrics (#${selectedFiling.versionId})` : 'Create New State Regulatory Filing'}
+              </Typography>
+            </Box>
+            <Chip
+              label="Saved to HELIOS_RATING_DB.dbo.RATE_PLAN_VERSION"
+              size="small"
+              sx={{ bgcolor: '#e0f2fe', color: '#0369a1', fontFamily: 'monospace', fontSize: '0.72rem', fontWeight: 600 }}
+            />
+          </DialogTitle>
+          <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 2 }}>
+            <Alert severity="info" sx={{ fontSize: '0.8rem' }}>
+              Statutory schedule caps, minimum premiums, and SERFF effective dates directly govern the real-time actuarial rating microservice (Port 8084).
+            </Alert>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Product Line</InputLabel>
+                  <Select
+                    label="Product Line"
+                    value={filingForm.productCode}
+                    onChange={(e) => setFilingForm({ ...filingForm, productCode: e.target.value })}
+                  >
+                    <MenuItem value="TECH_EO">Technology Errors &amp; Omissions (TECH_EO)</MenuItem>
+                    <MenuItem value="MED_MAL">Medical Malpractice (MED_MAL)</MenuItem>
+                    <MenuItem value="DNO">Directors &amp; Officers (DNO)</MenuItem>
+                    <MenuItem value="COMMERCIAL_AUTO">Commercial Auto (COMMERCIAL_AUTO)</MenuItem>
+                    <MenuItem value="GENERAL_LIABILITY">Commercial GL (GENERAL_LIABILITY)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Rating Plan Code"
+                  size="small"
+                  fullWidth
+                  value={filingForm.planCode}
+                  onChange={(e) => setFilingForm({ ...filingForm, planCode: e.target.value })}
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="State Code (or ALL)"
+                  size="small"
+                  fullWidth
+                  value={filingForm.stateCode}
+                  onChange={(e) => setFilingForm({ ...filingForm, stateCode: e.target.value.toUpperCase() })}
+                  helperText="e.g. CA, NY, TX, FL, or ALL"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Version Number"
+                  size="small"
+                  fullWidth
+                  value={filingForm.versionNumber}
+                  onChange={(e) => setFilingForm({ ...filingForm, versionNumber: e.target.value })}
+                  helperText="e.g. 2025.1 or 2026.1"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="SERFF Tracking Number"
+                  size="small"
+                  fullWidth
+                  value={filingForm.serffTrackingNumber}
+                  onChange={(e) => setFilingForm({ ...filingForm, serffTrackingNumber: e.target.value })}
+                  helperText="e.g. CA-2025-0812-EO"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Filing Status</InputLabel>
+                  <Select
+                    label="Filing Status"
+                    value={filingForm.filingStatus}
+                    onChange={(e) => setFilingForm({ ...filingForm, filingStatus: e.target.value })}
+                  >
+                    <MenuItem value="ACTIVE">ACTIVE (DOI Approved / File &amp; Use)</MenuItem>
+                    <MenuItem value="PENDING_APPROVAL">PENDING_APPROVAL (Under DOI Review)</MenuItem>
+                    <MenuItem value="SUPERSEDED">SUPERSEDED (Historical Prior Version)</MenuItem>
+                    <MenuItem value="WITHDRAWN">WITHDRAWN / REJECTED</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="New Business Effective Date"
+                  type="date"
+                  size="small"
+                  fullWidth
+                  value={filingForm.newBizEffectiveDate || ''}
+                  onChange={(e) => setFilingForm({ ...filingForm, newBizEffectiveDate: e.target.value })}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Renewal Effective Date"
+                  type="date"
+                  size="small"
+                  fullWidth
+                  value={filingForm.renewalEffectiveDate || ''}
+                  onChange={(e) => setFilingForm({ ...filingForm, renewalEffectiveDate: e.target.value })}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Statutory Min Premium ($)"
+                  type="number"
+                  size="small"
+                  fullWidth
+                  value={filingForm.minPremium}
+                  onChange={(e) => setFilingForm({ ...filingForm, minPremium: e.target.value })}
+                  helperText="Floor policy premium"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Max Schedule Debit %"
+                  type="number"
+                  inputProps={{ step: '0.01', min: '0', max: '1.0' }}
+                  size="small"
+                  fullWidth
+                  value={filingForm.maxScheduleDebitPct}
+                  onChange={(e) => setFilingForm({ ...filingForm, maxScheduleDebitPct: e.target.value })}
+                  helperText="e.g. 0.25 for +25% max surcharge"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Max Schedule Credit %"
+                  type="number"
+                  inputProps={{ step: '0.01', min: '0', max: '1.0' }}
+                  size="small"
+                  fullWidth
+                  value={filingForm.maxScheduleCreditPct}
+                  onChange={(e) => setFilingForm({ ...filingForm, maxScheduleCreditPct: e.target.value })}
+                  helperText="e.g. 0.25 for -25% max discount"
+                />
+              </Grid>
+
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="Regulatory Description &amp; Actuarial Justification"
+                  multiline
+                  rows={2}
+                  size="small"
+                  fullWidth
+                  value={filingForm.description}
+                  onChange={(e) => setFilingForm({ ...filingForm, description: e.target.value })}
+                  placeholder="Notes on state DOI approval, commissioner orders, or underwriting guidelines..."
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, py: 2 }}>
+            <Button onClick={() => setEditFilingModalOpen(false)} color="inherit">
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={isSavingFiling}
+              startIcon={<Save size={16} />}
+              sx={{ bgcolor: '#0284c7', '&:hover': { bgcolor: '#0369a1' }, fontWeight: 700 }}
+            >
+              {isSavingFiling ? 'Saving to Database...' : 'Save Filing to Rating Database'}
             </Button>
           </DialogActions>
         </form>

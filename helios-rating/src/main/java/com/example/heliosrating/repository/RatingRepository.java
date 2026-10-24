@@ -170,7 +170,33 @@ public class RatingRepository {
                     DESCRIPTION VARCHAR(255) NULL
                 );
             """);
-            log.info("Verified and provisioned SQL Server HELIOS_RATING_DB schema.");
+
+            List<RatePlanVersion> dbVersions = jdbcTemplate.query("""
+                SELECT VERSION_ID, PRODUCT_CODE, PLAN_CODE, STATE_CODE, VERSION_NUMBER, SERFF_TRACKING_NBR,
+                       FILING_STATUS, NEW_BIZ_EFF_DT, RENEWAL_EFF_DT, EXPIRATION_DT, MIN_PREMIUM,
+                       MAX_SCHEDULE_DEBIT, MAX_SCHEDULE_CREDIT, DESCRIPTION
+                FROM dbo.RATE_PLAN_VERSION
+                """, (rs, i) -> new RatePlanVersion(
+                    rs.getInt("VERSION_ID"),
+                    rs.getString("PRODUCT_CODE"),
+                    rs.getString("PLAN_CODE"),
+                    rs.getString("STATE_CODE"),
+                    rs.getString("VERSION_NUMBER"),
+                    rs.getString("SERFF_TRACKING_NBR"),
+                    rs.getString("FILING_STATUS"),
+                    rs.getDate("NEW_BIZ_EFF_DT") != null ? rs.getDate("NEW_BIZ_EFF_DT").toLocalDate() : null,
+                    rs.getDate("RENEWAL_EFF_DT") != null ? rs.getDate("RENEWAL_EFF_DT").toLocalDate() : null,
+                    rs.getDate("EXPIRATION_DT") != null ? rs.getDate("EXPIRATION_DT").toLocalDate() : null,
+                    rs.getBigDecimal("MIN_PREMIUM"),
+                    rs.getBigDecimal("MAX_SCHEDULE_DEBIT"),
+                    rs.getBigDecimal("MAX_SCHEDULE_CREDIT"),
+                    rs.getString("DESCRIPTION")
+            ));
+            if (!dbVersions.isEmpty()) {
+                versions.clear();
+                versions.addAll(dbVersions);
+            }
+            log.info("Verified and loaded {} state approval filings from SQL Server HELIOS_RATING_DB.", versions.size());
         } catch (Exception ex) {
             log.warn("SQL Server connection deferred ({}). Using initialized in-memory rating matrix.", ex.getMessage());
         }
@@ -179,6 +205,79 @@ public class RatingRepository {
     public List<Product> getAllProducts() { return new ArrayList<>(products.values()); }
     public List<RatingPlan> getAllPlans() { return new ArrayList<>(plans.values()); }
     public List<RatePlanVersion> getAllVersions() { return new ArrayList<>(versions); }
+
+    public RatePlanVersion updateVersion(RatePlanVersion updated) {
+        if (jdbcTemplate != null && updated.getVersionId() != null) {
+            try {
+                jdbcTemplate.update("""
+                    UPDATE dbo.RATE_PLAN_VERSION
+                    SET MIN_PREMIUM = ?, MAX_SCHEDULE_DEBIT = ?, MAX_SCHEDULE_CREDIT = ?,
+                        FILING_STATUS = ?, SERFF_TRACKING_NBR = ?,
+                        NEW_BIZ_EFF_DT = ?, RENEWAL_EFF_DT = ?, DESCRIPTION = ?
+                    WHERE VERSION_ID = ?
+                    """,
+                    updated.getMinPremium(),
+                    updated.getMaxScheduleDebitPct(),
+                    updated.getMaxScheduleCreditPct(),
+                    updated.getFilingStatus(),
+                    updated.getSerffTrackingNumber(),
+                    updated.getNewBizEffectiveDate(),
+                    updated.getRenewalEffectiveDate(),
+                    updated.getDescription(),
+                    updated.getVersionId()
+                );
+            } catch (Exception ex) {
+                log.warn("Failed updating RATE_PLAN_VERSION in SQL Server: {}", ex.getMessage());
+            }
+        }
+        for (int i = 0; i < versions.size(); i++) {
+            if (Objects.equals(versions.get(i).getVersionId(), updated.getVersionId())) {
+                versions.set(i, updated);
+                return updated;
+            }
+        }
+        versions.add(updated);
+        return updated;
+    }
+
+    public RatePlanVersion createVersion(RatePlanVersion newVer) {
+        if (jdbcTemplate != null) {
+            try {
+                org.springframework.jdbc.support.KeyHolder kh = new org.springframework.jdbc.support.GeneratedKeyHolder();
+                jdbcTemplate.update(connection -> {
+                    java.sql.PreparedStatement ps = connection.prepareStatement("""
+                        INSERT INTO dbo.RATE_PLAN_VERSION
+                        (PRODUCT_CODE, PLAN_CODE, STATE_CODE, VERSION_NUMBER, SERFF_TRACKING_NBR, FILING_STATUS,
+                         NEW_BIZ_EFF_DT, RENEWAL_EFF_DT, MIN_PREMIUM, MAX_SCHEDULE_DEBIT, MAX_SCHEDULE_CREDIT, DESCRIPTION)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, java.sql.Statement.RETURN_GENERATED_KEYS);
+                    ps.setString(1, newVer.getProductCode());
+                    ps.setString(2, newVer.getPlanCode());
+                    ps.setString(3, newVer.getStateCode());
+                    ps.setString(4, newVer.getVersionNumber());
+                    ps.setString(5, newVer.getSerffTrackingNumber());
+                    ps.setString(6, newVer.getFilingStatus());
+                    ps.setDate(7, java.sql.Date.valueOf(newVer.getNewBizEffectiveDate() != null ? newVer.getNewBizEffectiveDate() : LocalDate.now()));
+                    ps.setDate(8, java.sql.Date.valueOf(newVer.getRenewalEffectiveDate() != null ? newVer.getRenewalEffectiveDate() : LocalDate.now()));
+                    ps.setBigDecimal(9, newVer.getMinPremium());
+                    ps.setBigDecimal(10, newVer.getMaxScheduleDebitPct());
+                    ps.setBigDecimal(11, newVer.getMaxScheduleCreditPct());
+                    ps.setString(12, newVer.getDescription());
+                    return ps;
+                }, kh);
+                if (kh.getKey() != null) {
+                    newVer.setVersionId(kh.getKey().intValue());
+                }
+            } catch (Exception ex) {
+                log.warn("Failed inserting RATE_PLAN_VERSION into SQL Server: {}", ex.getMessage());
+            }
+        }
+        if (newVer.getVersionId() == null) {
+            newVer.setVersionId(versions.stream().mapToInt(v -> v.getVersionId() != null ? v.getVersionId() : 0).max().orElse(0) + 1);
+        }
+        versions.add(newVer);
+        return newVer;
+    }
 
     public RatePlanVersion findActiveVersion(String productCode, String stateCode, LocalDate effDate, String businessType) {
         String prod = normalizeProductCode(productCode);
