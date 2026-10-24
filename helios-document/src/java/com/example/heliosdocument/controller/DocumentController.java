@@ -198,10 +198,11 @@ public class DocumentController {
         long maxMem = rt.maxMemory();
 
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("service", "Helios Document Generation & Aspose PDF Engine");
+        map.put("service", "Helios Document Repository & Lifecycle Microservice");
+        map.put("shortName", "Document");
         map.put("status", "UP");
         map.put("version", "0.1.0-SNAPSHOT");
-        map.put("engine", "Aspose.PDF for Java 24.12");
+        map.put("pdfGeneratorEngine", "Delegated to DocGen Engine (Port 8088)");
         map.put("serverTime", java.time.LocalDateTime.now().toString());
         map.put("storagePath", storageService.getRootStoragePath().toString());
         map.put("storagePathExists", java.nio.file.Files.exists(storageService.getRootStoragePath()));

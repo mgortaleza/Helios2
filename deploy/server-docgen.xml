@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================================================ -->
+<!-- Apache Tomcat 11.0 Configuration for HeliosDocgen Dedicated Aspose Engine     -->
+<!-- Instance Directory: C:\tomcat11-docgen                                      -->
+<!-- HTTP Connector Port: 8088                                                   -->
+<!-- Shutdown Port:       8009                                                   -->
+<!-- Deploy WAR:          C:\tomcat11-docgen\webapps\helios-docgen.war           -->
+<!-- ============================================================================ -->
+<Server port="8009" shutdown="SHUTDOWN">
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
+  <Listener className="org.apache.catalina.core.AprLifecycleListener" SSLEngine="on" />
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener" />
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener" />
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener" />
+
+  <GlobalNamingResources>
+    <Resource name="UserDatabase" auth="Container"
+              type="org.apache.catalina.UserDatabase"
+              description="User database that can be updated and saved"
+              factory="org.apache.catalina.users.MemoryUserDatabaseFactory"
+              pathname="conf/tomcat-users.xml" />
+  </GlobalNamingResources>
+
+  <Service name="Catalina">
+    <!-- Non-SSL HTTP/1.1 Connector on Port 8088 -->
+    <Connector port="8088" protocol="HTTP/1.1"
+               connectionTimeout="30000"
+               redirectPort="8449"
+               maxThreads="150"
+               minSpareThreads="10"
+               enableLookups="false"
+               acceptCount="100"
+               URIEncoding="UTF-8" />
+
+    <Engine name="Catalina" defaultHost="localhost">
+      <Realm className="org.apache.catalina.realm.LockOutRealm">
+        <Realm className="org.apache.catalina.realm.UserDatabaseRealm"
+               resourceName="UserDatabase" />
+      </Realm>
+
+      <Host name="localhost"  appBase="webapps"
+            unpackWARs="true" autoDeploy="true">
+
+        <!-- Single-line pattern access log -->
+        <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs"
+               prefix="docgen_access_log" suffix=".txt"
+               pattern="%h %l %u %t &quot;%r&quot; %s %b %D" />
+
+      </Host>
+    </Engine>
+  </Service>
+</Server>

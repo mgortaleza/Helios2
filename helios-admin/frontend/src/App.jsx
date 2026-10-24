@@ -67,6 +67,7 @@ import {
   Database,
   HardDrive,
   FileText,
+  Printer,
   Zap,
   AlertCircle,
   Layers,
@@ -239,6 +240,7 @@ export default function App() {
     admin: { loading: true, data: null, latency: null, error: null },
     rating: { loading: true, data: null, latency: null, error: null },
     document: { loading: true, data: null, latency: null, error: null },
+    docgen: { loading: true, data: null, latency: null, error: null }
   });
   const [flash, setFlash] = useState(null);
 
@@ -641,18 +643,20 @@ export default function App() {
     };
 
     try {
-      const [h2, adm, rat, doc] = await Promise.all([
+      const [h2, adm, rat, doc, dgn] = await Promise.all([
         pingService('/core-api/diagnostics'),
         pingService('/api/diagnostics'),
         pingService('/rating-api/diagnostics'),
-        pingService(`/document-api/documents/diagnostics?tenantId=${selectedTenantId || 1}`)
+        pingService(`/document-api/documents/diagnostics?tenantId=${selectedTenantId || 1}`),
+        pingService('/docgen-api/diagnostics')
       ]);
 
       setServicesDiag({
         helios2: h2,
         admin: adm,
         rating: rat,
-        document: doc
+        document: doc,
+        docgen: dgn
       });
 
       if (adm.data) {
@@ -1536,15 +1540,27 @@ export default function App() {
                   },
                   {
                     id: 'document',
-                    title: 'HeliosDocument Aspose PDF Engine',
+                    title: 'HeliosDocument Repository & Lifecycle',
                     shortName: 'HeliosDocument',
-                    serviceDesc: 'High-throughput PDF policy packages, dec pages, binders & letters',
+                    serviceDesc: 'SQL Server metadata tracking, disk storage, retrieval, preview & lifecycle',
                     port: '8086',
                     windowsService: 'Tomcat11Document',
                     route: '/document-api/documents/diagnostics',
                     color: '#7c3aed',
                     icon: <FileText size={22} color="#c084fc" />,
                     diag: servicesDiag.document
+                  },
+                  {
+                    id: 'docgen',
+                    title: 'HeliosDocgen Dedicated PDF Engine',
+                    shortName: 'HeliosDocgen',
+                    serviceDesc: 'Isolated high-performance Aspose.PDF generation engine (Dec pages, binders, proposals)',
+                    port: '8088',
+                    windowsService: 'Tomcat11Docgen',
+                    route: '/docgen-api/diagnostics',
+                    color: '#d97706',
+                    icon: <Printer size={22} color="#fbbf24" />,
+                    diag: servicesDiag.docgen
                   }
                 ];
 
@@ -1563,7 +1579,7 @@ export default function App() {
                           Platform Topology &amp; Service Diagnostics
                         </Typography>
                         <Typography variant="body2" sx={{ color: '#64748b' }}>
-                          Real-time health telemetry, round-trip latency, JVM heap allocation, and database connectivity across all 4 microservices
+                          Real-time health telemetry, round-trip latency, JVM heap allocation, and database connectivity across all 5 microservices
                         </Typography>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>

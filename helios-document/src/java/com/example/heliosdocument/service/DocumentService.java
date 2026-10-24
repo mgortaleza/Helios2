@@ -21,6 +21,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
 
+import com.example.heliosdocument.client.DocgenClient;
 import com.example.heliosdocument.model.DocumentDto;
 import com.example.heliosdocument.model.GenerateDocumentRequest;
 import com.zaxxer.hikari.HikariConfig;
@@ -31,15 +32,15 @@ public class DocumentService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentService.class);
 
-    private final AsposePdfGeneratorService pdfGeneratorService;
+    private final DocgenClient docgenClient;
     private final DocumentStorageService storageService;
     private final Map<Integer, JdbcTemplate> tenantTemplates = new ConcurrentHashMap<>();
 
     @Value("${spring.datasource.url}")
     private String masterDbUrl;
 
-    public DocumentService(AsposePdfGeneratorService pdfGeneratorService, DocumentStorageService storageService) {
-        this.pdfGeneratorService = pdfGeneratorService;
+    public DocumentService(DocgenClient docgenClient, DocumentStorageService storageService) {
+        this.docgenClient = docgenClient;
         this.storageService = storageService;
     }
 
@@ -81,8 +82,8 @@ public class DocumentService {
                     default -> "Policy Declarations Schedule — " + entityNbr + " (" + req.insuredName() + ")";
                 };
 
-        // 1. Generate Binary via Aspose.PDF
-        AsposePdfGeneratorService.GeneratedPdf generated = pdfGeneratorService.generate(req);
+        // 1. Delegate PDF generation strictly to DocGen microservice
+        DocgenClient.GeneratedDocumentResult generated = docgenClient.generate(req);
 
         // 2. Determine File Name
         String timestamp = LocalDate.now().toString().replace("-", "");
@@ -108,7 +109,7 @@ public class DocumentService {
                     TENANT_ID, ENTITY_TYPE, ENTITY_ID, ENTITY_NBR, DOC_TYPE,
                     DOC_TITLE, FILE_NAME, FILE_PATH, FILE_SIZE_BYTES, MIME_TYPE,
                     PAGE_COUNT, STATUS, GENERATED_BY
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ISSUED', 'ASPOSE_PDF_ENGINE')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ISSUED', 'DOCGEN_SERVICE')
                 """;
 
         jdbc.update(con -> {
@@ -144,7 +145,7 @@ public class DocumentService {
                 "application/pdf",
                 generated.pageCount(),
                 "ISSUED",
-                "ASPOSE_PDF_ENGINE",
+                "DOCGEN_SERVICE",
                 LocalDate.now().toString()
         );
     }
