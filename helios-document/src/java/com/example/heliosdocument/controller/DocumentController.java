@@ -202,7 +202,6 @@ public class DocumentController {
         map.put("shortName", "Document");
         map.put("status", "UP");
         map.put("version", "0.1.0-SNAPSHOT");
-        map.put("pdfGeneratorEngine", "Delegated to DocGen Engine (Port 8088)");
         map.put("serverTime", java.time.LocalDateTime.now().toString());
         map.put("storagePath", storageService.getRootStoragePath().toString());
         map.put("storagePathExists", java.nio.file.Files.exists(storageService.getRootStoragePath()));

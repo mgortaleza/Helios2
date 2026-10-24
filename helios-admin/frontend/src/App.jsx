@@ -1847,10 +1847,23 @@ export default function App() {
                                         <>
                                           <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
                                             <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
-                                              DOCUMENT GENERATOR &amp; ASPOSE PDF
+                                              DOCUMENT REPOSITORY &amp; STORAGE
                                             </Typography>
                                             <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
-                                              {data.engine || 'Aspose.PDF for Java 24.12'} &bull; {data.documentsIssuedCount || 0} Documents Issued &bull; Storage: <code>{data.storagePath}</code>
+                                              {data.documentsIssuedCount != null ? data.documentsIssuedCount : 0} Documents Issued &bull; Storage: <code>{data.storagePath || 'C:\\helios-storage\\documents'}</code>
+                                            </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+
+                                      {svc.id === 'docgen' && (
+                                        <>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              PDF GENERATION ENGINE
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              {data.engine || 'Aspose.PDF for Java 24.12'} &bull; Dedicated High-Throughput PDF Rendering Engine
                                             </Typography>
                                           </Grid>
                                         </>
