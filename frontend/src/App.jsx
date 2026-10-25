@@ -85,7 +85,11 @@ import {
   FolderCheck,
   Search,
   Trash2,
-  Upload
+  Upload,
+  History,
+  MapPin,
+  Building2,
+  UserCheck
 } from 'lucide-react';
 
 // --- Dynamic Per-Tenant Theme Builder ---
@@ -952,6 +956,15 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
   );
 };
 
+// --- US States List ---
+const US_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
+];
+
 // --- 3. Submissions View ---
 const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [subTab, setSubTab] = useState(0);
@@ -960,8 +973,36 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [parties, setParties] = useState([]);
   const [selectedPartyId, setSelectedPartyId] = useState(null);
   const [partySearch, setPartySearch] = useState('');
-  const [newOrgName, setNewOrgName] = useState('');
+  const [partyTypeFilter, setPartyTypeFilter] = useState('ALL');
   const [openAddOrg, setOpenAddOrg] = useState(false);
+  const [openAddressHistory, setOpenAddressHistory] = useState(false);
+  const [partyForAddress, setPartyForAddress] = useState(null);
+  const [addressHistoryList, setAddressHistoryList] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showNewAddressInput, setShowNewAddressInput] = useState(false);
+  const [newAddressData, setNewAddressData] = useState({
+    line1: '',
+    line2: '',
+    city: '',
+    stateCode: 'IL',
+    postalCode: '',
+    county: '',
+    changeReason: 'Address Relocation / Update'
+  });
+  const [newPartyForm, setNewPartyForm] = useState({
+    partyType: 'ORGANIZATION',
+    partySubType: 'INSURED',
+    name: '',
+    firstName: '',
+    lastName: '',
+    line1: '',
+    line2: '',
+    city: '',
+    stateCode: 'IL',
+    postalCode: '',
+    county: '',
+    changeReason: 'Initial Address Setup'
+  });
   const [ratingSubForQuote, setRatingSubForQuote] = useState(null);
   const [inspectingQuoteDetail, setInspectingQuoteDetail] = useState(null);
   const [flash, setFlash] = useState(null);
@@ -1018,9 +1059,13 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   );
 
   const loadParties = useCallback(
-    async (q = '') => {
+    async (q = '', pType = '') => {
       try {
-        const data = await apiFetch(`/api/parties?q=${encodeURIComponent(q)}`);
+        let url = `/api/parties?q=${encodeURIComponent(q)}`;
+        if (pType && pType !== 'ALL') {
+          url += `&partyType=${encodeURIComponent(pType)}`;
+        }
+        const data = await apiFetch(url);
         const list = Array.isArray(data) ? data : [];
         setParties(list);
         setSelectedPartyId((prev) =>
@@ -1036,8 +1081,8 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   useEffect(() => {
     setSelectedSub(null);
     loadSubmissions();
-    loadParties('');
-  }, [loadSubmissions, loadParties, activeTenantId]);
+    loadParties('', partyTypeFilter);
+  }, [loadSubmissions, loadParties, activeTenantId, partyTypeFilter]);
 
   // Rating Engine Integration State
   const [openRateModal, setOpenRateModal] = useState(false);
@@ -1150,22 +1195,126 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
     }
   };
 
-  const handleAddOrg = async (e) => {
+  const handleAddParty = async (e) => {
     e.preventDefault();
-    if (!newOrgName.trim()) return;
+    const isPerson = newPartyForm.partyType === 'PERSON';
+    const computedName = isPerson
+      ? `${newPartyForm.firstName.trim()} ${newPartyForm.lastName.trim()}`.trim()
+      : newPartyForm.name.trim();
+
+    if (!computedName) {
+      setFlash({
+        type: 'error',
+        text: isPerson ? 'First Name and Last Name are required.' : 'Organization Name is required.'
+      });
+      return;
+    }
+
     try {
+      const payload = {
+        name: computedName,
+        orgName: computedName,
+        partyType: newPartyForm.partyType,
+        partySubType: newPartyForm.partySubType,
+        firstName: isPerson ? newPartyForm.firstName.trim() : null,
+        lastName: isPerson ? newPartyForm.lastName.trim() : null,
+        address: newPartyForm.line1 && newPartyForm.line1.trim() ? {
+          line1: newPartyForm.line1.trim(),
+          line2: newPartyForm.line2 && newPartyForm.line2.trim() ? newPartyForm.line2.trim() : null,
+          city: newPartyForm.city ? newPartyForm.city.trim() : '',
+          stateCode: newPartyForm.stateCode || 'IL',
+          postalCode: newPartyForm.postalCode ? newPartyForm.postalCode.trim() : '',
+          county: newPartyForm.county && newPartyForm.county.trim() ? newPartyForm.county.trim() : null,
+          countryCode: 'US',
+          changeReason: newPartyForm.changeReason ? newPartyForm.changeReason.trim() : 'Initial Address Setup'
+        } : null
+      };
+
       const created = await apiFetch('/api/parties', {
         method: 'POST',
-        body: JSON.stringify({ orgName: newOrgName.trim() })
+        body: JSON.stringify(payload)
       });
       setOpenAddOrg(false);
-      setNewOrgName('');
-      await loadParties('');
+      setNewPartyForm({
+        partyType: 'ORGANIZATION',
+        partySubType: 'INSURED',
+        name: '',
+        firstName: '',
+        lastName: '',
+        line1: '',
+        line2: '',
+        city: '',
+        stateCode: 'IL',
+        postalCode: '',
+        county: '',
+        changeReason: 'Initial Address Setup'
+      });
+      await loadParties(partySearch, partyTypeFilter);
       setSelectedPartyId(created.id);
       setSubTab(1);
-      setFlash({ type: 'success', text: `Saved organization: ${created.name}` });
+      setFlash({ type: 'success', text: `Saved ${created.partyTypeDisplay || created.partyType}: ${created.name}` });
     } catch (err) {
       setFlash({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleOpenAddressHistory = async (party, e) => {
+    if (e) e.stopPropagation();
+    setPartyForAddress(party);
+    setOpenAddressHistory(true);
+    setShowNewAddressInput(false);
+    setLoadingHistory(true);
+    try {
+      const history = await apiFetch(`/api/parties/${party.id}/addresses`);
+      setAddressHistoryList(Array.isArray(history) ? history : []);
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to load address history: ${err.message}` });
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleSaveNewAddress = async (e) => {
+    e.preventDefault();
+    if (!partyForAddress || !newAddressData.line1.trim()) return;
+    try {
+      const payload = {
+        address: {
+          line1: newAddressData.line1.trim(),
+          line2: newAddressData.line2 ? newAddressData.line2.trim() : null,
+          city: newAddressData.city ? newAddressData.city.trim() : '',
+          stateCode: newAddressData.stateCode || 'IL',
+          postalCode: newAddressData.postalCode ? newAddressData.postalCode.trim() : '',
+          county: newAddressData.county ? newAddressData.county.trim() : null,
+          countryCode: 'US',
+          changeReason: newAddressData.changeReason ? newAddressData.changeReason.trim() : 'Address Relocation / Update'
+        },
+        changedBy: activeRole?.roleName ? `${activeRole.roleName}` : 'Underwriting Team',
+        changeReason: newAddressData.changeReason ? newAddressData.changeReason.trim() : 'Address Relocation / Update'
+      };
+
+      await apiFetch(`/api/parties/${partyForAddress.id}/address`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+
+      setFlash({ type: 'success', text: `Updated address for ${partyForAddress.name}!` });
+      setShowNewAddressInput(false);
+      setNewAddressData({
+        line1: '',
+        line2: '',
+        city: '',
+        stateCode: 'IL',
+        postalCode: '',
+        county: '',
+        changeReason: 'Address Relocation / Update'
+      });
+
+      const history = await apiFetch(`/api/parties/${partyForAddress.id}/addresses`);
+      setAddressHistoryList(Array.isArray(history) ? history : []);
+      await loadParties(partySearch, partyTypeFilter);
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to update address: ${err.message}` });
     }
   };
 
@@ -1410,7 +1559,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             disabled={!canAddOrganization}
             onClick={() => setOpenAddOrg(true)}
           >
-            {canAddOrganization ? 'Add Organization' : 'Add Organization (Restricted)'}
+            {canAddOrganization ? 'Add Party / Organization' : 'Add Party (Restricted)'}
           </Button>
         </Box>
       </Box>
@@ -1424,7 +1573,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={subTab} onChange={(_, v) => setSubTab(v)}>
           <Tab label="Submissions Queue" />
-          <Tab label="Organizations (Select Row to Create Submission)" />
+          <Tab label="Party & Address Registry (PT_PARTY & PT_ADDRESS)" />
         </Tabs>
       </Box>
 
@@ -1475,19 +1624,36 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
               component="form"
               onSubmit={(e) => {
                 e.preventDefault();
-                loadParties(partySearch);
+                loadParties(partySearch, partyTypeFilter);
               }}
-              sx={{ display: 'flex', gap: 2, mb: 2.5 }}
+              sx={{ display: 'flex', gap: 2, mb: 2.5, flexWrap: 'wrap', alignItems: 'center' }}
             >
               <TextField
                 size="small"
-                fullWidth
-                label="Search Organization Name"
+                sx={{ flex: 1, minWidth: 240 }}
+                label="Search Party Name, City, or State"
                 value={partySearch}
                 onChange={(e) => setPartySearch(e.target.value)}
               />
-              <Button type="submit" variant="contained" color="primary" sx={{ minWidth: 120 }}>
-                Search
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel id="party-type-filter-label">Entity Classification</InputLabel>
+                <Select
+                  labelId="party-type-filter-label"
+                  label="Entity Classification"
+                  value={partyTypeFilter}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPartyTypeFilter(val);
+                    loadParties(partySearch, val);
+                  }}
+                >
+                  <MenuItem value="ALL">All Classifications</MenuItem>
+                  <MenuItem value="ORGANIZATION">Organizations (Insured / Agency)</MenuItem>
+                  <MenuItem value="PERSON">Persons (Producer / Employee)</MenuItem>
+                </Select>
+              </FormControl>
+              <Button type="submit" variant="contained" color="primary" sx={{ minWidth: 110 }}>
+                Filter
               </Button>
             </Box>
 
@@ -1495,14 +1661,31 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
               <Table>
                 <TableHead sx={{ backgroundColor: '#f8fafc' }}>
                   <TableRow>
-                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>
-                      ORGANIZATION NAME
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 60 }}>
+                      ID
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', minWidth: 180 }}>
+                      PARTY / ENTITY NAME
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', minWidth: 160 }}>
+                      CLASSIFICATION
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', minWidth: 260 }}>
+                      PRIMARY US ADDRESS
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 110 }}>
+                      STATUS
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 150 }}>
+                      ADDRESS ACTIONS
                     </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {parties.map((party) => {
                     const isSelected = party.id === selectedPartyId;
+                    const isPerson = party.partyType === 'PERSON';
+                    const addr = party.primaryAddress;
                     return (
                       <TableRow
                         key={party.id}
@@ -1519,8 +1702,97 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                             : {})
                         }}
                       >
-                        <TableCell sx={{ fontWeight: isSelected ? 700 : 500 }}>
-                          {party.name}
+                        <TableCell sx={{ fontWeight: 600, color: '#64748b' }}>
+                          #{party.id}
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: isSelected ? 700 : 600, color: '#0f172a' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {isPerson ? (
+                              <User size={16} color="#0284c7" />
+                            ) : (
+                              <Building size={16} color="#15803d" />
+                            )}
+                            <span>{party.name}</span>
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={party.partyTypeDisplay || `${party.partyType}: ${party.partySubType}`}
+                            sx={{
+                              backgroundColor:
+                                party.partyType === 'ORGANIZATION'
+                                  ? party.partySubType === 'AGENCY'
+                                    ? '#faf5ff'
+                                    : '#eff6ff'
+                                  : party.partySubType === 'PRODUCER'
+                                  ? '#fffbeb'
+                                  : '#f0fdfa',
+                              color:
+                                party.partyType === 'ORGANIZATION'
+                                  ? party.partySubType === 'AGENCY'
+                                    ? '#7e22ce'
+                                    : '#1d4ed8'
+                                  : party.partySubType === 'PRODUCER'
+                                  ? '#b45309'
+                                  : '#0f766e',
+                              border:
+                                party.partyType === 'ORGANIZATION'
+                                  ? party.partySubType === 'AGENCY'
+                                    ? '1px solid #e9d5ff'
+                                    : '1px solid #bfdbfe'
+                                  : party.partySubType === 'PRODUCER'
+                                  ? '1px solid #fde68a'
+                                  : '1px solid #99f6e4',
+                              fontWeight: 600,
+                              fontSize: '0.72rem',
+                              height: 22
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {addr ? (
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 600, color: '#1e293b' }}>
+                                {addr.line1} {addr.line2 ? `(${addr.line2})` : ''}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: '#64748b' }}>
+                                {addr.city}, {addr.stateCode} {addr.postalCode}
+                                {addr.county ? ` • ${addr.county} County` : ''}
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Typography variant="caption" sx={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                              No address registered
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={addr?.addressStatus || (addr?.isActive ? 'ACTIVE' : 'NO ADDRESS')}
+                            color={addr?.isActive ? 'success' : 'default'}
+                            variant={addr?.isActive ? 'filled' : 'outlined'}
+                            sx={{ fontSize: '0.68rem', height: 20, fontWeight: 700 }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="inherit"
+                            startIcon={<History size={14} />}
+                            onClick={(e) => handleOpenAddressHistory(party, e)}
+                            sx={{
+                              textTransform: 'none',
+                              fontSize: '0.72rem',
+                              borderColor: '#cbd5e1',
+                              color: '#334155',
+                              '&:hover': { borderColor: '#94a3b8', backgroundColor: '#f1f5f9' }
+                            }}
+                          >
+                            History &amp; Changes
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -1543,7 +1815,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                   ? `Create Submission Restricted for Role (${activeRole?.roleName})`
                   : selectedParty
                     ? `Rate & Create Submission for ${selectedParty.name}`
-                    : 'Select an Organization to Rate & Submit'}
+                    : 'Select a Party to Rate & Submit'}
               </Button>
             </Box>
           </CardContent>
@@ -1707,26 +1979,439 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={openAddOrg} onClose={() => setOpenAddOrg(false)} maxWidth="xs" fullWidth>
-        <form onSubmit={handleAddOrg}>
-          <DialogTitle>Add New Organization</DialogTitle>
-          <DialogContent dividers>
-            <TextField
-              label="Organization Name"
-              size="small"
-              fullWidth
-              required
-              value={newOrgName}
-              onChange={(e) => setNewOrgName(e.target.value)}
-            />
+      {/* Enhanced Add Party / Organization Dialog with Classification and US Address */}
+      <Dialog open={openAddOrg} onClose={() => setOpenAddOrg(false)} maxWidth="sm" fullWidth>
+        <form onSubmit={handleAddParty}>
+          <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Building2 size={22} color="#0284c7" />
+            <span>Add New Party (PT_PARTY &amp; PT_ADDRESS)</span>
+          </DialogTitle>
+          <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            <Typography variant="body2" sx={{ color: '#64748b' }}>
+              Classify entity according to standard insurance code table (<code>PT_PARTY_TYPE_CODE</code>) and configure baseline US address.
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="party-type-select-label">Party Type</InputLabel>
+                  <Select
+                    labelId="party-type-select-label"
+                    label="Party Type"
+                    value={newPartyForm.partyType}
+                    onChange={(e) => {
+                      const type = e.target.value;
+                      setNewPartyForm((prev) => ({
+                        ...prev,
+                        partyType: type,
+                        partySubType: type === 'PERSON' ? 'PRODUCER' : 'INSURED'
+                      }));
+                    }}
+                  >
+                    <MenuItem value="ORGANIZATION">Organization</MenuItem>
+                    <MenuItem value="PERSON">Person</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="party-subtype-select-label">Party Sub-Type</InputLabel>
+                  <Select
+                    labelId="party-subtype-select-label"
+                    label="Party Sub-Type"
+                    value={newPartyForm.partySubType}
+                    onChange={(e) =>
+                      setNewPartyForm((prev) => ({ ...prev, partySubType: e.target.value }))
+                    }
+                  >
+                    {newPartyForm.partyType === 'ORGANIZATION' ? [
+                      <MenuItem key="INSURED" value="INSURED">Commercial Insured</MenuItem>,
+                      <MenuItem key="AGENCY" value="AGENCY">Brokerage / Agency</MenuItem>
+                    ] : [
+                      <MenuItem key="PRODUCER" value="PRODUCER">Licensed Producer</MenuItem>,
+                      <MenuItem key="EMPLOYEE" value="EMPLOYEE">Internal Employee</MenuItem>
+                    ]}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {newPartyForm.partyType === 'ORGANIZATION' ? (
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    label="Organization Name"
+                    size="small"
+                    fullWidth
+                    required
+                    placeholder="e.g. Acme Health Solutions LLC"
+                    value={newPartyForm.name}
+                    onChange={(e) =>
+                      setNewPartyForm((prev) => ({ ...prev, name: e.target.value }))
+                    }
+                  />
+                </Grid>
+              ) : (
+                <>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="First Name"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. Sarah"
+                      value={newPartyForm.firstName}
+                      onChange={(e) =>
+                        setNewPartyForm((prev) => ({ ...prev, firstName: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="Last Name"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. Jenkins"
+                      value={newPartyForm.lastName}
+                      onChange={(e) =>
+                        setNewPartyForm((prev) => ({ ...prev, lastName: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                </>
+              )}
+            </Grid>
+
+            <Divider>
+              <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600 }}>
+                PRIMARY US ADDRESS (PT_ADDRESS)
+              </Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 8 }}>
+                <TextField
+                  label="Street Address Line 1"
+                  size="small"
+                  fullWidth
+                  required
+                  placeholder="e.g. 500 Michigan Ave"
+                  value={newPartyForm.line1}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, line1: e.target.value }))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Suite / Unit"
+                  size="small"
+                  fullWidth
+                  placeholder="e.g. Suite 400"
+                  value={newPartyForm.line2}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, line2: e.target.value }))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 5 }}>
+                <TextField
+                  label="City"
+                  size="small"
+                  fullWidth
+                  required
+                  placeholder="e.g. Chicago"
+                  value={newPartyForm.city}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, city: e.target.value }))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="party-state-label">State</InputLabel>
+                  <Select
+                    labelId="party-state-label"
+                    label="State"
+                    value={newPartyForm.stateCode}
+                    onChange={(e) =>
+                      setNewPartyForm((prev) => ({ ...prev, stateCode: e.target.value }))
+                    }
+                  >
+                    {US_STATES.map((st) => (
+                      <MenuItem key={st} value={st}>
+                        {st}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 6, sm: 4 }}>
+                <TextField
+                  label="ZIP Code"
+                  size="small"
+                  fullWidth
+                  required
+                  placeholder="e.g. 60611"
+                  value={newPartyForm.postalCode}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, postalCode: e.target.value }))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="County"
+                  size="small"
+                  fullWidth
+                  placeholder="e.g. Cook"
+                  value={newPartyForm.county}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, county: e.target.value }))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Setup Reason / Note"
+                  size="small"
+                  fullWidth
+                  placeholder="Initial Address Setup"
+                  value={newPartyForm.changeReason}
+                  onChange={(e) =>
+                    setNewPartyForm((prev) => ({ ...prev, changeReason: e.target.value }))
+                  }
+                />
+              </Grid>
+            </Grid>
           </DialogContent>
-          <DialogActions>
+          <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setOpenAddOrg(false)}>Cancel</Button>
             <Button type="submit" variant="contained" color="primary">
-              Save Organization
+              Save Party &amp; Address
             </Button>
           </DialogActions>
         </form>
+      </Dialog>
+
+      {/* Address History & Tracking Dialog */}
+      <Dialog
+        open={openAddressHistory}
+        onClose={() => setOpenAddressHistory(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <History size={22} color="#0284c7" />
+            <span>Address History &amp; Change Tracking &mdash; {partyForAddress?.name}</span>
+          </Box>
+          <Button
+            size="small"
+            variant={showNewAddressInput ? 'outlined' : 'contained'}
+            color="primary"
+            startIcon={showNewAddressInput ? undefined : <Plus size={16} />}
+            onClick={() => setShowNewAddressInput((prev) => !prev)}
+          >
+            {showNewAddressInput ? 'Close Form' : '+ Record New Address'}
+          </Button>
+        </DialogTitle>
+        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+          {showNewAddressInput && (
+            <Card variant="outlined" sx={{ backgroundColor: '#f8fafc', p: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#0f172a' }}>
+                Record Address Change (Archives Previous Active Address)
+              </Typography>
+              <form onSubmit={handleSaveNewAddress}>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, sm: 8 }}>
+                    <TextField
+                      label="New Street Address Line 1"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. 100 Corporate Blvd"
+                      value={newAddressData.line1}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, line1: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      label="Suite / Unit"
+                      size="small"
+                      fullWidth
+                      placeholder="e.g. Suite 200"
+                      value={newAddressData.line2}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, line2: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 5 }}>
+                    <TextField
+                      label="City"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. Boston"
+                      value={newAddressData.city}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, city: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 3 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="edit-state-label">State</InputLabel>
+                      <Select
+                        labelId="edit-state-label"
+                        label="State"
+                        value={newAddressData.stateCode}
+                        onChange={(e) =>
+                          setNewAddressData((prev) => ({ ...prev, stateCode: e.target.value }))
+                        }
+                      >
+                        {US_STATES.map((st) => (
+                          <MenuItem key={st} value={st}>
+                            {st}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 4 }}>
+                    <TextField
+                      label="ZIP Code"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. 02115"
+                      value={newAddressData.postalCode}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, postalCode: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="County"
+                      size="small"
+                      fullWidth
+                      placeholder="e.g. Suffolk"
+                      value={newAddressData.county}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, county: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="Reason for Change (Audit Tracking)"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. Relocated regional office"
+                      value={newAddressData.changeReason}
+                      onChange={(e) =>
+                        setNewAddressData((prev) => ({ ...prev, changeReason: e.target.value }))
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12 }} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5 }}>
+                    <Button size="small" onClick={() => setShowNewAddressInput(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" size="small" variant="contained" color="success">
+                      Save &amp; Activate New Address
+                    </Button>
+                  </Grid>
+                </Grid>
+              </form>
+            </Card>
+          )}
+
+          {loadingHistory ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress size={32} />
+            </Box>
+          ) : addressHistoryList.length === 0 ? (
+            <Alert severity="info">No address records found for this party.</Alert>
+          ) : (
+            <TableContainer component={Paper} elevation={0} variant="outlined">
+              <Table size="small">
+                <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                  <TableRow>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 90 }}>
+                      STATUS
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>
+                      US ADDRESS
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 140 }}>
+                      EFFECTIVE PERIOD
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 130 }}>
+                      CHANGED DT
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', width: 110 }}>
+                      CHANGED BY
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>
+                      CHANGE REASON
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {addressHistoryList.map((addr) => (
+                    <TableRow
+                      key={addr.addressId}
+                      sx={{
+                        backgroundColor: addr.isActive ? 'rgba(34, 197, 94, 0.04)' : 'transparent'
+                      }}
+                    >
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          label={addr.addressStatus || (addr.isActive ? 'ACTIVE' : 'SUPERSEDED')}
+                          color={addr.isActive ? 'success' : 'default'}
+                          variant={addr.isActive ? 'filled' : 'outlined'}
+                          sx={{ fontSize: '0.68rem', height: 20, fontWeight: 700 }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#1e293b' }}>
+                          {addr.line1} {addr.line2 ? `(${addr.line2})` : ''}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                          {addr.city}, {addr.stateCode} {addr.postalCode}
+                          {addr.county ? ` • ${addr.county}` : ''}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', color: '#475569' }}>
+                        <div>From: {addr.effectiveFrom ? addr.effectiveFrom.substring(0, 10) : '—'}</div>
+                        <div>To: {addr.effectiveTo ? addr.effectiveTo.substring(0, 10) : 'Present'}</div>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        {addr.changedDt ? addr.changedDt.substring(0, 19).replace('T', ' ') : '—'}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', color: '#475569', fontWeight: 500 }}>
+                        {addr.changedBy || 'System'}
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', color: '#334155', fontStyle: 'italic' }}>
+                        {addr.changeReason || '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenAddressHistory(false)}>Close</Button>
+        </DialogActions>
       </Dialog>
 
       {/* Rating & Quote Creation for Selected Submission */}

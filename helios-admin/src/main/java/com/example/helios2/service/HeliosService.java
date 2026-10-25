@@ -29,7 +29,75 @@ public class HeliosService {
         this.tenantJdbcTemplate = tenantJdbcTemplate;
     }
 
-    public record PartyDto(int id, String name) {
+    public record AddressDto(
+            int addressId,
+            int partyId,
+            String line1,
+            String line2,
+            String city,
+            String stateCode,
+            String postalCode,
+            String county,
+            String countryCode,
+            boolean isActive,
+            String addressStatus,
+            String effectiveFrom,
+            String effectiveTo,
+            String changedDt,
+            String changedBy,
+            String changeReason,
+            String createdDt
+    ) {
+    }
+
+    public record PartyTypeCodeDto(
+            String partyType,
+            String partySubType,
+            String displayName,
+            String description,
+            boolean isActive
+    ) {
+    }
+
+    public record AddressInput(
+            String line1,
+            String line2,
+            String city,
+            String stateCode,
+            String postalCode,
+            String county,
+            String countryCode,
+            String changeReason
+    ) {
+    }
+
+    public record CreatePartyRequest(
+            String name,
+            String orgName,
+            String partyType,
+            String partySubType,
+            String firstName,
+            String lastName,
+            AddressInput address
+    ) {
+        public CreatePartyRequest(String orgName) {
+            this(orgName, orgName, "ORGANIZATION", "INSURED", null, null, null);
+        }
+    }
+
+    public record PartyDto(
+            int id,
+            String name,
+            String partyType,
+            String partySubType,
+            String partyTypeDisplay,
+            String firstName,
+            String lastName,
+            AddressDto primaryAddress
+    ) {
+        public PartyDto(int id, String name) {
+            this(id, name, "ORGANIZATION", "INSURED", "Commercial Insured", null, null, null);
+        }
     }
 
     public record SubmissionDto(
@@ -136,13 +204,66 @@ public class HeliosService {
             return;
         }
         try {
-            // 1. Ensure dbo.PT_PARTY exists
+            // 1. Ensure dbo.PT_PARTY, dbo.PT_PARTY_TYPE_CODE, and dbo.PT_ADDRESS exist
             tenantJdbcTemplate.execute("""
+                    IF OBJECT_ID('dbo.PT_PARTY_TYPE_CODE', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.PT_PARTY_TYPE_CODE (
+                            PARTY_TYPE VARCHAR(20) NOT NULL,
+                            PARTY_SUB_TYPE VARCHAR(20) NOT NULL,
+                            DISPLAY_NAME NVARCHAR(100) NOT NULL,
+                            DESCRIPTION NVARCHAR(255) NULL,
+                            IS_ACTIVE BIT DEFAULT 1 NOT NULL,
+                            CONSTRAINT PK_pt_party_type_code PRIMARY KEY (PARTY_TYPE, PARTY_SUB_TYPE)
+                        );
+                        INSERT INTO dbo.PT_PARTY_TYPE_CODE (PARTY_TYPE, PARTY_SUB_TYPE, DISPLAY_NAME, DESCRIPTION, IS_ACTIVE)
+                        VALUES
+                            ('ORGANIZATION', 'INSURED', 'Commercial Insured', 'Standard commercial entity requiring coverage', 1),
+                            ('ORGANIZATION', 'AGENCY', 'Brokerage / Agency', 'Independent or captive retail insurance brokerage', 1),
+                            ('PERSON', 'EMPLOYEE', 'Internal Employee', 'Internal underwriting, claims, or operations staff member', 1),
+                            ('PERSON', 'PRODUCER', 'Licensed Producer', 'Licensed retail insurance agent or producer', 1);
+                    END;
+
                     IF OBJECT_ID('dbo.PT_PARTY', 'U') IS NULL
                     CREATE TABLE dbo.PT_PARTY (
                         PARTY_ID INT IDENTITY(1,1) PRIMARY KEY,
                         ORG_NM VARCHAR(100) NOT NULL
                     );
+
+                    IF COL_LENGTH('dbo.PT_PARTY', 'PARTY_TYPE') IS NULL
+                        ALTER TABLE dbo.PT_PARTY ADD PARTY_TYPE VARCHAR(20) DEFAULT 'ORGANIZATION';
+                    IF COL_LENGTH('dbo.PT_PARTY', 'PARTY_SUB_TYPE') IS NULL
+                        ALTER TABLE dbo.PT_PARTY ADD PARTY_SUB_TYPE VARCHAR(20) DEFAULT 'INSURED';
+                    IF COL_LENGTH('dbo.PT_PARTY', 'FIRST_NAME') IS NULL
+                        ALTER TABLE dbo.PT_PARTY ADD FIRST_NAME NVARCHAR(100) NULL;
+                    IF COL_LENGTH('dbo.PT_PARTY', 'LAST_NAME') IS NULL
+                        ALTER TABLE dbo.PT_PARTY ADD LAST_NAME NVARCHAR(100) NULL;
+                    IF COL_LENGTH('dbo.PT_PARTY', 'PRIMARY_ADDRESS_ID') IS NULL
+                        ALTER TABLE dbo.PT_PARTY ADD PRIMARY_ADDRESS_ID INT NULL;
+
+                    IF OBJECT_ID('dbo.PT_ADDRESS', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.PT_ADDRESS (
+                            ADDRESS_ID INT IDENTITY(1,1) PRIMARY KEY,
+                            PARTY_ID INT NOT NULL REFERENCES dbo.PT_PARTY(PARTY_ID),
+                            LINE1 NVARCHAR(150) NOT NULL,
+                            LINE2 NVARCHAR(150) NULL,
+                            CITY NVARCHAR(100) NOT NULL,
+                            STATE_CODE VARCHAR(2) NOT NULL,
+                            POSTAL_CODE VARCHAR(10) NOT NULL,
+                            COUNTY NVARCHAR(100) NULL,
+                            COUNTRY_CODE VARCHAR(2) DEFAULT 'US' NOT NULL,
+                            IS_ACTIVE BIT DEFAULT 1 NOT NULL,
+                            ADDRESS_STATUS VARCHAR(20) DEFAULT 'ACTIVE' NOT NULL,
+                            EFFECTIVE_FROM DATETIME2 DEFAULT GETDATE() NOT NULL,
+                            EFFECTIVE_TO DATETIME2 NULL,
+                            CHANGED_DT DATETIME2 DEFAULT GETDATE() NOT NULL,
+                            CHANGED_BY NVARCHAR(100) NULL,
+                            CHANGE_REASON NVARCHAR(255) NULL,
+                            CREATED_DT DATETIME2 DEFAULT GETDATE() NOT NULL
+                        );
+                        CREATE INDEX IX_pt_address_party_active ON dbo.PT_ADDRESS (PARTY_ID, IS_ACTIVE);
+                    END;
                     """);
 
             // 2. Ensure dbo.UW_TASK exists and has RELATED_RECORD
@@ -724,41 +845,368 @@ public class HeliosService {
     }
 
     public List<PartyDto> searchParties(String query) {
+        return searchParties(query, null, null);
+    }
+
+    public List<PartyDto> searchParties(String query, String partyType, String partySubType) {
         ensureTenantSchema();
-        if (query == null || query.isBlank()) {
-            String sql = "SELECT PARTY_ID, ORG_NM FROM dbo.PT_PARTY ORDER BY ORG_NM ASC";
-            return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new PartyDto(
-                    rs.getInt("PARTY_ID"),
-                    rs.getString("ORG_NM")
-            ));
+        StringBuilder sql = new StringBuilder("""
+                SELECT 
+                    p.PARTY_ID,
+                    p.ORG_NM,
+                    COALESCE(p.PARTY_TYPE, 'ORGANIZATION') AS PARTY_TYPE,
+                    COALESCE(p.PARTY_SUB_TYPE, 'INSURED') AS PARTY_SUB_TYPE,
+                    p.FIRST_NAME,
+                    p.LAST_NAME,
+                    COALESCE(tc.DISPLAY_NAME, p.PARTY_SUB_TYPE, 'Commercial Insured') AS PARTY_TYPE_DISPLAY,
+                    a.ADDRESS_ID,
+                    a.LINE1,
+                    a.LINE2,
+                    a.CITY,
+                    a.STATE_CODE,
+                    a.POSTAL_CODE,
+                    a.COUNTY,
+                    a.COUNTRY_CODE,
+                    a.IS_ACTIVE AS ADDR_IS_ACTIVE,
+                    a.ADDRESS_STATUS,
+                    CONVERT(VARCHAR(30), a.EFFECTIVE_FROM, 126) AS EFFECTIVE_FROM,
+                    CONVERT(VARCHAR(30), a.EFFECTIVE_TO, 126) AS EFFECTIVE_TO,
+                    CONVERT(VARCHAR(30), a.CHANGED_DT, 126) AS CHANGED_DT,
+                    a.CHANGED_BY,
+                    a.CHANGE_REASON,
+                    CONVERT(VARCHAR(30), a.CREATED_DT, 126) AS CREATED_DT
+                FROM dbo.PT_PARTY p
+                LEFT JOIN dbo.PT_PARTY_TYPE_CODE tc 
+                    ON p.PARTY_TYPE = tc.PARTY_TYPE AND p.PARTY_SUB_TYPE = tc.PARTY_SUB_TYPE
+                LEFT JOIN dbo.PT_ADDRESS a 
+                    ON p.PRIMARY_ADDRESS_ID = a.ADDRESS_ID
+                WHERE 1=1
+                """);
+        List<Object> params = new ArrayList<>();
+        if (query != null && !query.isBlank()) {
+            sql.append(" AND (p.ORG_NM LIKE ? OR p.FIRST_NAME LIKE ? OR p.LAST_NAME LIKE ? OR a.CITY LIKE ? OR a.STATE_CODE LIKE ?)");
+            String q = "%" + query.trim() + "%";
+            params.add(q);
+            params.add(q);
+            params.add(q);
+            params.add(q);
+            params.add(q);
         }
-        String sql = "SELECT PARTY_ID, ORG_NM FROM dbo.PT_PARTY WHERE ORG_NM LIKE ? ORDER BY ORG_NM ASC";
-        return tenantJdbcTemplate.query(
-                sql,
-                (rs, rowNum) -> new PartyDto(rs.getInt("PARTY_ID"), rs.getString("ORG_NM")),
-                "%" + query.trim() + "%"
-        );
+        if (partyType != null && !partyType.isBlank()) {
+            sql.append(" AND p.PARTY_TYPE = ?");
+            params.add(partyType.trim().toUpperCase());
+        }
+        if (partySubType != null && !partySubType.isBlank()) {
+            sql.append(" AND p.PARTY_SUB_TYPE = ?");
+            params.add(partySubType.trim().toUpperCase());
+        }
+        sql.append(" ORDER BY p.ORG_NM ASC");
+
+        return tenantJdbcTemplate.query(sql.toString(), (rs, rowNum) -> {
+            int partyId = rs.getInt("PARTY_ID");
+            String name = rs.getString("ORG_NM");
+            String pType = rs.getString("PARTY_TYPE");
+            String pSubType = rs.getString("PARTY_SUB_TYPE");
+            String pTypeDisplay = rs.getString("PARTY_TYPE_DISPLAY");
+            String fName = rs.getString("FIRST_NAME");
+            String lName = rs.getString("LAST_NAME");
+
+            AddressDto address = null;
+            int addrId = rs.getInt("ADDRESS_ID");
+            if (!rs.wasNull() && addrId > 0) {
+                address = new AddressDto(
+                        addrId,
+                        partyId,
+                        rs.getString("LINE1"),
+                        rs.getString("LINE2"),
+                        rs.getString("CITY"),
+                        rs.getString("STATE_CODE"),
+                        rs.getString("POSTAL_CODE"),
+                        rs.getString("COUNTY"),
+                        rs.getString("COUNTRY_CODE"),
+                        rs.getBoolean("ADDR_IS_ACTIVE"),
+                        rs.getString("ADDRESS_STATUS"),
+                        rs.getString("EFFECTIVE_FROM"),
+                        rs.getString("EFFECTIVE_TO"),
+                        rs.getString("CHANGED_DT"),
+                        rs.getString("CHANGED_BY"),
+                        rs.getString("CHANGE_REASON"),
+                        rs.getString("CREATED_DT")
+                );
+            }
+
+            return new PartyDto(
+                    partyId,
+                    name,
+                    pType,
+                    pSubType,
+                    pTypeDisplay,
+                    fName,
+                    lName,
+                    address
+            );
+        }, params.toArray());
+    }
+
+    public List<AddressDto> getPartyAddresses(int partyId) {
+        ensureTenantSchema();
+        String sql = """
+                SELECT 
+                    ADDRESS_ID, PARTY_ID, LINE1, LINE2, CITY, STATE_CODE, POSTAL_CODE, COUNTY, COUNTRY_CODE,
+                    IS_ACTIVE, ADDRESS_STATUS,
+                    CONVERT(VARCHAR(30), EFFECTIVE_FROM, 126) AS EFFECTIVE_FROM,
+                    CONVERT(VARCHAR(30), EFFECTIVE_TO, 126) AS EFFECTIVE_TO,
+                    CONVERT(VARCHAR(30), CHANGED_DT, 126) AS CHANGED_DT,
+                    CHANGED_BY, CHANGE_REASON,
+                    CONVERT(VARCHAR(30), CREATED_DT, 126) AS CREATED_DT
+                FROM dbo.PT_ADDRESS
+                WHERE PARTY_ID = ?
+                ORDER BY IS_ACTIVE DESC, CHANGED_DT DESC
+                """;
+        return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new AddressDto(
+                rs.getInt("ADDRESS_ID"),
+                rs.getInt("PARTY_ID"),
+                rs.getString("LINE1"),
+                rs.getString("LINE2"),
+                rs.getString("CITY"),
+                rs.getString("STATE_CODE"),
+                rs.getString("POSTAL_CODE"),
+                rs.getString("COUNTY"),
+                rs.getString("COUNTRY_CODE"),
+                rs.getBoolean("IS_ACTIVE"),
+                rs.getString("ADDRESS_STATUS"),
+                rs.getString("EFFECTIVE_FROM"),
+                rs.getString("EFFECTIVE_TO"),
+                rs.getString("CHANGED_DT"),
+                rs.getString("CHANGED_BY"),
+                rs.getString("CHANGE_REASON"),
+                rs.getString("CREATED_DT")
+        ), partyId);
+    }
+
+    public List<PartyTypeCodeDto> getPartyTypeCodes() {
+        ensureTenantSchema();
+        String sql = """
+                SELECT PARTY_TYPE, PARTY_SUB_TYPE, DISPLAY_NAME, DESCRIPTION, IS_ACTIVE
+                FROM dbo.PT_PARTY_TYPE_CODE
+                WHERE IS_ACTIVE = 1
+                ORDER BY PARTY_TYPE, PARTY_SUB_TYPE
+                """;
+        return tenantJdbcTemplate.query(sql, (rs, rowNum) -> new PartyTypeCodeDto(
+                rs.getString("PARTY_TYPE"),
+                rs.getString("PARTY_SUB_TYPE"),
+                rs.getString("DISPLAY_NAME"),
+                rs.getString("DESCRIPTION"),
+                rs.getBoolean("IS_ACTIVE")
+        ));
     }
 
     public PartyDto createParty(String orgName) {
-        ensureTenantSchema();
-        if (orgName == null || orgName.isBlank()) {
-            throw new IllegalArgumentException("Organization Name cannot be empty.");
-        }
-        String trimmed = orgName.trim();
-        String sql = "INSERT INTO dbo.PT_PARTY (ORG_NM) VALUES (?)";
-        KeyHolder keyHolder = new GeneratedKeyHolder();
+        return createParty(new CreatePartyRequest(orgName));
+    }
 
+    public PartyDto createParty(CreatePartyRequest req) {
+        ensureTenantSchema();
+        String pType = (req.partyType() != null && !req.partyType().isBlank())
+                ? req.partyType().trim().toUpperCase()
+                : "ORGANIZATION";
+        String pSubType = (req.partySubType() != null && !req.partySubType().isBlank())
+                ? req.partySubType().trim().toUpperCase()
+                : ("PERSON".equals(pType) ? "PRODUCER" : "INSURED");
+
+        String fName = (req.firstName() != null) ? req.firstName().trim() : null;
+        String lName = (req.lastName() != null) ? req.lastName().trim() : null;
+
+        String displayName;
+        if ("PERSON".equals(pType)) {
+            if (req.name() != null && !req.name().isBlank()) {
+                displayName = req.name().trim();
+            } else {
+                displayName = ((fName != null ? fName : "") + " " + (lName != null ? lName : "")).trim();
+                if (displayName.isBlank() && req.orgName() != null) {
+                    displayName = req.orgName().trim();
+                }
+            }
+        } else {
+            if (req.orgName() != null && !req.orgName().isBlank()) {
+                displayName = req.orgName().trim();
+            } else if (req.name() != null && !req.name().isBlank()) {
+                displayName = req.name().trim();
+            } else {
+                displayName = "";
+            }
+        }
+
+        if (displayName.isBlank()) {
+            throw new IllegalArgumentException("Party Name or Person First/Last Name cannot be empty.");
+        }
+
+        String sqlParty = """
+                INSERT INTO dbo.PT_PARTY (ORG_NM, PARTY_TYPE, PARTY_SUB_TYPE, FIRST_NAME, LAST_NAME)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        final String finalName = displayName;
+        tenantJdbcTemplate.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(sqlParty, Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, finalName);
+            ps.setString(2, pType);
+            ps.setString(3, pSubType);
+            ps.setString(4, fName);
+            ps.setString(5, lName);
+            return ps;
+        }, keyHolder);
+
+        Number partyKey = keyHolder.getKey();
+        int partyId = partyKey != null ? partyKey.intValue() : -1;
+
+        AddressDto addressDto = null;
+        if (req.address() != null && req.address().line1() != null && !req.address().line1().isBlank()) {
+            AddressInput addr = req.address();
+            String sqlAddr = """
+                    INSERT INTO dbo.PT_ADDRESS (
+                        PARTY_ID, LINE1, LINE2, CITY, STATE_CODE, POSTAL_CODE, COUNTY, COUNTRY_CODE,
+                        IS_ACTIVE, ADDRESS_STATUS, EFFECTIVE_FROM, CHANGED_DT, CHANGED_BY, CHANGE_REASON, CREATED_DT
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?,
+                        1, 'ACTIVE', SYSUTCDATETIME(), SYSUTCDATETIME(), ?, ?, SYSUTCDATETIME()
+                    )
+                    """;
+            KeyHolder addrKeyHolder = new GeneratedKeyHolder();
+            String country = (addr.countryCode() != null && !addr.countryCode().isBlank()) ? addr.countryCode().trim() : "US";
+            String reason = (addr.changeReason() != null && !addr.changeReason().isBlank()) ? addr.changeReason().trim() : "Initial Address Creation";
+            tenantJdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(sqlAddr, Statement.RETURN_GENERATED_KEYS);
+                ps.setInt(1, partyId);
+                ps.setString(2, addr.line1().trim());
+                ps.setString(3, addr.line2() != null ? addr.line2().trim() : null);
+                ps.setString(4, addr.city() != null ? addr.city().trim() : "");
+                ps.setString(5, addr.stateCode() != null ? addr.stateCode().trim().toUpperCase() : "");
+                ps.setString(6, addr.postalCode() != null ? addr.postalCode().trim() : "");
+                ps.setString(7, addr.county() != null ? addr.county().trim() : null);
+                ps.setString(8, country);
+                ps.setString(9, "System User");
+                ps.setString(10, reason);
+                return ps;
+            }, addrKeyHolder);
+
+            Number addrKey = addrKeyHolder.getKey();
+            int addressId = addrKey != null ? addrKey.intValue() : -1;
+
+            if (addressId > 0) {
+                tenantJdbcTemplate.update("UPDATE dbo.PT_PARTY SET PRIMARY_ADDRESS_ID = ? WHERE PARTY_ID = ?", addressId, partyId);
+                addressDto = new AddressDto(
+                        addressId,
+                        partyId,
+                        addr.line1().trim(),
+                        addr.line2() != null ? addr.line2().trim() : null,
+                        addr.city() != null ? addr.city().trim() : "",
+                        addr.stateCode() != null ? addr.stateCode().trim().toUpperCase() : "",
+                        addr.postalCode() != null ? addr.postalCode().trim() : "",
+                        addr.county() != null ? addr.county().trim() : null,
+                        country,
+                        true,
+                        "ACTIVE",
+                        LocalDate.now().toString(),
+                        null,
+                        LocalDate.now().toString(),
+                        "System User",
+                        reason,
+                        LocalDate.now().toString()
+                );
+            }
+        }
+
+        getOrCreatePolicyForParty(partyId, finalName);
+
+        String typeDisplay = pSubType;
+        try {
+            List<String> displays = tenantJdbcTemplate.query(
+                    "SELECT DISPLAY_NAME FROM dbo.PT_PARTY_TYPE_CODE WHERE PARTY_TYPE = ? AND PARTY_SUB_TYPE = ?",
+                    (rs, rNum) -> rs.getString("DISPLAY_NAME"),
+                    pType, pSubType
+            );
+            if (!displays.isEmpty()) {
+                typeDisplay = displays.get(0);
+            }
+        } catch (Exception ignored) {
+        }
+
+        return new PartyDto(
+                partyId,
+                finalName,
+                pType,
+                pSubType,
+                typeDisplay,
+                fName,
+                lName,
+                addressDto
+        );
+    }
+
+    public AddressDto updatePartyAddress(int partyId, AddressInput input, String changedBy, String changeReason) {
+        ensureTenantSchema();
+        if (input == null || input.line1() == null || input.line1().isBlank()) {
+            throw new IllegalArgumentException("Address Line 1 is required.");
+        }
+        String actor = (changedBy != null && !changedBy.isBlank()) ? changedBy.trim() : "System User";
+        String reason = (changeReason != null && !changeReason.isBlank())
+                ? changeReason.trim()
+                : (input.changeReason() != null ? input.changeReason().trim() : "Address Update");
+
+        tenantJdbcTemplate.update("""
+                UPDATE dbo.PT_ADDRESS
+                SET IS_ACTIVE = 0,
+                    ADDRESS_STATUS = 'SUPERSEDED',
+                    EFFECTIVE_TO = SYSUTCDATETIME(),
+                    CHANGED_DT = SYSUTCDATETIME(),
+                    CHANGED_BY = ?,
+                    CHANGE_REASON = ?
+                WHERE PARTY_ID = ? AND IS_ACTIVE = 1
+                """, actor, reason, partyId);
+
+        String country = (input.countryCode() != null && !input.countryCode().isBlank()) ? input.countryCode().trim() : "US";
+        String sql = """
+                INSERT INTO dbo.PT_ADDRESS (
+                    PARTY_ID, LINE1, LINE2, CITY, STATE_CODE, POSTAL_CODE, COUNTY, COUNTRY_CODE,
+                    IS_ACTIVE, ADDRESS_STATUS, EFFECTIVE_FROM, CHANGED_DT, CHANGED_BY, CHANGE_REASON, CREATED_DT
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    1, 'ACTIVE', SYSUTCDATETIME(), SYSUTCDATETIME(), ?, ?, SYSUTCDATETIME()
+                )
+                """;
+        KeyHolder keyHolder = new GeneratedKeyHolder();
         tenantJdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-            ps.setString(1, trimmed);
+            ps.setInt(1, partyId);
+            ps.setString(2, input.line1().trim());
+            ps.setString(3, input.line2() != null ? input.line2().trim() : null);
+            ps.setString(4, input.city() != null ? input.city().trim() : "");
+            ps.setString(5, input.stateCode() != null ? input.stateCode().trim().toUpperCase() : "");
+            ps.setString(6, input.postalCode() != null ? input.postalCode().trim() : "");
+            ps.setString(7, input.county() != null ? input.county().trim() : null);
+            ps.setString(8, country);
+            ps.setString(9, actor);
+            ps.setString(10, reason);
             return ps;
         }, keyHolder);
 
         Number key = keyHolder.getKey();
-        int newId = key != null ? key.intValue() : -1;
-        getOrCreatePolicyForParty(newId, trimmed);
-        return new PartyDto(newId, trimmed);
+        int addressId = key != null ? key.intValue() : -1;
+
+        if (addressId > 0) {
+            tenantJdbcTemplate.update("UPDATE dbo.PT_PARTY SET PRIMARY_ADDRESS_ID = ? WHERE PARTY_ID = ?", addressId, partyId);
+
+            String formatted = String.format("%s, %s, %s %s",
+                    input.line1().trim(),
+                    input.city() != null ? input.city().trim() : "",
+                    input.stateCode() != null ? input.stateCode().trim() : "",
+                    input.postalCode() != null ? input.postalCode().trim() : "").replaceAll(" ,", "").trim();
+            tenantJdbcTemplate.update("UPDATE dbo.UW_POLICY SET ADDRESS = ? WHERE INSURED_PID = ?", formatted, partyId);
+        }
+
+        List<AddressDto> records = getPartyAddresses(partyId);
+        return records.stream().filter(a -> a.addressId() == addressId).findFirst().orElse(null);
     }
 
     public SubmissionDto createSubmission(int partyId) {

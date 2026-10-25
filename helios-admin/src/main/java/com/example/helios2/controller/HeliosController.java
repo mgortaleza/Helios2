@@ -7,7 +7,9 @@ import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -15,8 +17,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.helios2.config.SqlServerDataSourceFactory;
 import com.example.helios2.service.HeliosService;
+import com.example.helios2.service.HeliosService.AddressDto;
+import com.example.helios2.service.HeliosService.AddressInput;
 import com.example.helios2.service.HeliosService.ClaimDto;
+import com.example.helios2.service.HeliosService.CreatePartyRequest;
 import com.example.helios2.service.HeliosService.PartyDto;
+import com.example.helios2.service.HeliosService.PartyTypeCodeDto;
 import com.example.helios2.service.HeliosService.PolicyDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
 import com.example.helios2.service.HeliosService.TaskDto;
@@ -139,18 +145,48 @@ public class HeliosController {
         return ResponseEntity.ok(created);
     }
 
-    @GetMapping("/parties")
-    public List<PartyDto> searchParties(@RequestParam(name = "q", required = false) String query) {
-        return heliosService.searchParties(query);
+    @GetMapping("/party-types")
+    public List<PartyTypeCodeDto> getPartyTypes() {
+        return heliosService.getPartyTypeCodes();
     }
 
-    public record CreatePartyRequest(String orgName) {
+    @GetMapping("/parties")
+    public List<PartyDto> searchParties(
+            @RequestParam(name = "q", required = false) String query,
+            @RequestParam(name = "partyType", required = false) String partyType,
+            @RequestParam(name = "partySubType", required = false) String partySubType) {
+        return heliosService.searchParties(query, partyType, partySubType);
     }
 
     @PostMapping("/parties")
     public ResponseEntity<PartyDto> createParty(@RequestBody CreatePartyRequest request) {
-        PartyDto created = heliosService.createParty(request.orgName());
+        PartyDto created = heliosService.createParty(request);
         return ResponseEntity.ok(created);
+    }
+
+    @GetMapping("/parties/{partyId}/addresses")
+    public List<AddressDto> getPartyAddresses(@PathVariable("partyId") int partyId) {
+        return heliosService.getPartyAddresses(partyId);
+    }
+
+    public record UpdateAddressRequest(
+            AddressInput address,
+            String changedBy,
+            String changeReason
+    ) {
+    }
+
+    @PutMapping("/parties/{partyId}/address")
+    public ResponseEntity<AddressDto> updatePartyAddress(
+            @PathVariable("partyId") int partyId,
+            @RequestBody UpdateAddressRequest request) {
+        AddressDto updated = heliosService.updatePartyAddress(
+                partyId,
+                request.address(),
+                request.changedBy(),
+                request.changeReason()
+        );
+        return ResponseEntity.ok(updated);
     }
 
     @GetMapping("/claims")
