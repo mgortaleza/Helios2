@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -75,6 +76,35 @@ public class HeliosController {
         TenantConfig saved = tenantRegistryService.registerOrUpdateTenant(config);
         tenantRoutingDataSource.evictTenantDataSource(config.tenantId());
         return ResponseEntity.ok(saved);
+    }
+
+    @GetMapping("/tenants/next-id")
+    public ResponseEntity<Map<String, Object>> getNextTenantId() {
+        int nextId = tenantRegistryService.getNextTenantId();
+        return ResponseEntity.ok(Map.of("nextTenantId", nextId));
+    }
+
+    @DeleteMapping("/tenants/{tenantId}")
+    public ResponseEntity<Map<String, Object>> deleteTenant(@PathVariable("tenantId") int tenantId) {
+        boolean deleted = tenantRegistryService.deleteTenant(tenantId);
+        tenantRoutingDataSource.evictTenantDataSource(tenantId);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", deleted);
+        resp.put("tenantId", tenantId);
+        resp.put("message", deleted
+                ? "Tenant #" + tenantId + " removed from application registry. Physical database remains preserved."
+                : "Tenant #" + tenantId + " not found.");
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/tenants/provision")
+    public ResponseEntity<Map<String, Object>> provisionTenant(@RequestBody TenantRegistryService.ProvisionTenantRequest req) {
+        Map<String, Object> result = tenantRegistryService.provisionNewTenant(req);
+        Integer tid = (Integer) result.get("tenantId");
+        if (tid != null) {
+            tenantRoutingDataSource.evictTenantDataSource(tid);
+        }
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/roles")

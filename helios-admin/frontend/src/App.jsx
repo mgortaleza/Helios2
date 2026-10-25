@@ -73,7 +73,8 @@ import {
   Layers,
   Clock,
   GitFork,
-  Save
+  Save,
+  Trash2
 } from 'lucide-react';
 
 import RuleFlowStudio from './RuleFlowStudio';
@@ -260,6 +261,10 @@ export default function App() {
 
   // Tenant Modal State
   const [openTenantDialog, setOpenTenantDialog] = useState(false);
+  const [isNewTenant, setIsNewTenant] = useState(false);
+  const [isProvisioning, setIsProvisioning] = useState(false);
+  const [tenantToDelete, setTenantToDelete] = useState(null);
+  const [isDeletingTenant, setIsDeletingTenant] = useState(false);
   const [tenantForm, setTenantForm] = useState({
     tenantId: '',
     tenantName: '',
@@ -269,7 +274,10 @@ export default function App() {
     accentColor: '#f59e0b',
     brandTitle: 'Helios',
     brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
-    enabledModules: 'dashboard,policy,submissions,claims'
+    enabledModules: 'dashboard,policy,submissions,claims',
+    createDatabase: true,
+    copySchema: true,
+    seedInitialData: true
   });
 
   // Role Modal State
@@ -723,7 +731,33 @@ export default function App() {
     loadDiagnostics();
   }, [selectedTenantId]);
 
+  const handleOpenNewTenant = async () => {
+    try {
+      const res = await apiFetch('/api/tenants/next-id');
+      const nextId = res.nextTenantId || 3;
+      setTenantForm({
+        tenantId: String(nextId),
+        tenantName: '',
+        dbServerName: 'dbtst.ad.ortaleza.com',
+        dbCatalogName: `HELIOS${nextId}_TST`,
+        primaryColor: '#013a12',
+        accentColor: '#f59e0b',
+        brandTitle: 'Helios',
+        brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
+        enabledModules: 'dashboard,policy,submissions,claims',
+        createDatabase: true,
+        copySchema: true,
+        seedInitialData: true
+      });
+      setIsNewTenant(true);
+      setOpenTenantDialog(true);
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to fetch next tenant ID: ${err.message}` });
+    }
+  };
+
   const handleOpenEditTenant = (t) => {
+    setIsNewTenant(false);
     setTenantForm({
       tenantId: String(t.tenantId),
       tenantName: t.tenantName || '',
@@ -733,34 +767,99 @@ export default function App() {
       accentColor: t.accentColor || '#f59e0b',
       brandTitle: t.brandTitle || 'Helios',
       brandSubtitle: t.brandSubtitle || 'INSURANCE MANAGEMENT SUITE',
-      enabledModules: t.enabledModules || 'dashboard,policy,submissions,claims'
+      enabledModules: t.enabledModules || 'dashboard,policy,submissions,claims',
+      createDatabase: false,
+      copySchema: false,
+      seedInitialData: false
     });
     setOpenTenantDialog(true);
   };
 
   const handleSaveTenant = async (e) => {
     e.preventDefault();
+    if (isNewTenant) {
+      setIsProvisioning(true);
+      try {
+        const res = await apiFetch('/api/tenants/provision', {
+          method: 'POST',
+          body: JSON.stringify({
+            tenantId: Number(tenantForm.tenantId),
+            tenantName: tenantForm.tenantName.trim(),
+            dbServerName: tenantForm.dbServerName.trim(),
+            dbCatalogName: tenantForm.dbCatalogName.trim(),
+            primaryColor: tenantForm.primaryColor,
+            accentColor: tenantForm.accentColor,
+            brandTitle: tenantForm.brandTitle.trim(),
+            brandSubtitle: tenantForm.brandSubtitle.trim(),
+            enabledModules: tenantForm.enabledModules,
+            createDatabase: tenantForm.createDatabase,
+            copySchema: tenantForm.copySchema,
+            seedInitialData: tenantForm.seedInitialData
+          })
+        });
+        setOpenTenantDialog(false);
+        setFlash({
+          type: 'success',
+          text: `Tenant #${res.tenantId} (${res.tenantName}) created! Database '${res.dbCatalogName}' initialized on ${res.dbServerName} with 12 core tables.`
+        });
+        await loadTenants();
+        await loadDiagnostics();
+      } catch (err) {
+        setFlash({ type: 'error', text: err.message });
+      } finally {
+        setIsProvisioning(false);
+      }
+    } else {
+      try {
+        await apiFetch('/api/tenants', {
+          method: 'POST',
+          body: JSON.stringify({
+            tenantId: Number(tenantForm.tenantId),
+            tenantName: tenantForm.tenantName.trim(),
+            dbServerName: tenantForm.dbServerName.trim(),
+            dbCatalogName: tenantForm.dbCatalogName.trim(),
+            primaryColor: tenantForm.primaryColor,
+            accentColor: tenantForm.accentColor,
+            brandTitle: tenantForm.brandTitle.trim(),
+            brandSubtitle: tenantForm.brandSubtitle.trim(),
+            enabledModules: tenantForm.enabledModules
+          })
+        });
+        setOpenTenantDialog(false);
+        setFlash({ type: 'success', text: `Saved Tenant #${tenantForm.tenantId} customization to MSTR_DATA.` });
+        await loadTenants();
+        await loadDiagnostics();
+      } catch (err) {
+        setFlash({ type: 'error', text: err.message });
+      }
+    }
+  };
+
+  const handleConfirmDeleteTenant = (tenant) => {
+    setTenantToDelete(tenant);
+  };
+
+  const handleDeleteTenant = async () => {
+    if (!tenantToDelete) return;
+    setIsDeletingTenant(true);
     try {
-      await apiFetch('/api/tenants', {
-        method: 'POST',
-        body: JSON.stringify({
-          tenantId: Number(tenantForm.tenantId),
-          tenantName: tenantForm.tenantName.trim(),
-          dbServerName: tenantForm.dbServerName.trim(),
-          dbCatalogName: tenantForm.dbCatalogName.trim(),
-          primaryColor: tenantForm.primaryColor,
-          accentColor: tenantForm.accentColor,
-          brandTitle: tenantForm.brandTitle.trim(),
-          brandSubtitle: tenantForm.brandSubtitle.trim(),
-          enabledModules: tenantForm.enabledModules
-        })
+      const res = await apiFetch(`/api/tenants/${tenantToDelete.tenantId}`, {
+        method: 'DELETE'
       });
-      setOpenTenantDialog(false);
-      setFlash({ type: 'success', text: `Saved Tenant #${tenantForm.tenantId} customization to MSTR_DATA.` });
+      setFlash({
+        type: 'success',
+        text: `Tenant #${tenantToDelete.tenantId} (${tenantToDelete.tenantName}) removed from app registry. Physical database '${tenantToDelete.dbCatalogName}' remains preserved on ${tenantToDelete.dbServerName}.`
+      });
+      setTenantToDelete(null);
+      if (selectedTenantId === tenantToDelete.tenantId) {
+        setSelectedTenantId(1);
+      }
       await loadTenants();
       await loadDiagnostics();
     } catch (err) {
-      setFlash({ type: 'error', text: err.message });
+      setFlash({ type: 'error', text: `Failed to remove tenant: ${err.message}` });
+    } finally {
+      setIsDeletingTenant(false);
     }
   };
 
@@ -1028,22 +1127,9 @@ export default function App() {
                     <Button
                       variant="contained"
                       startIcon={<Plus size={16} />}
-                      onClick={() => {
-                        setTenantForm({
-                          tenantId: '',
-                          tenantName: '',
-                          dbServerName: 'dbtst.ad.ortaleza.com',
-                          dbCatalogName: 'HELIOS2_TST',
-                          primaryColor: '#013a12',
-                          accentColor: '#f59e0b',
-                          brandTitle: 'Helios',
-                          brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
-                          enabledModules: 'dashboard,policy,submissions,claims'
-                        });
-                        setOpenTenantDialog(true);
-                      }}
+                      onClick={handleOpenNewTenant}
                     >
-                      Register New Tenant
+                      Add New Tenant
                     </Button>
                   </Box>
 
@@ -1117,6 +1203,15 @@ export default function App() {
                                     onClick={() => handleOpenEditTenant(t)}
                                   >
                                     Customize UI
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="error"
+                                    startIcon={<Trash2 size={14} />}
+                                    onClick={() => handleConfirmDeleteTenant(t)}
+                                  >
+                                    Delete
                                   </Button>
                                 </Box>
                               </TableCell>
@@ -2304,11 +2399,21 @@ export default function App() {
         </Box>
       </Box>
 
-      {/* Tenant Customization Dialog */}
-      <Dialog open={openTenantDialog} onClose={() => setOpenTenantDialog(false)} maxWidth="sm" fullWidth>
+      {/* Tenant Customization / Provision Dialog */}
+      <Dialog open={openTenantDialog} onClose={() => !isProvisioning && setOpenTenantDialog(false)} maxWidth="sm" fullWidth>
         <form onSubmit={handleSaveTenant}>
-          <DialogTitle>Customize Tenant UI &amp; Database Routing</DialogTitle>
+          <DialogTitle>
+            {isNewTenant ? 'Provision New Tenant & SQL Database' : 'Customize Tenant UI & Database Routing'}
+          </DialogTitle>
           <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {isNewTenant && (
+              <Alert severity="info" sx={{ fontSize: '0.85rem' }}>
+                <strong>Automated Provisioning:</strong> Tenant ID auto-populates with the primary key.
+                Submitting will create the SQL Server database <code>{tenantForm.dbCatalogName}</code> on <code>{tenantForm.dbServerName}</code>,
+                clone all 12 core tables (APP_USER, PT_PARTY, UW_POLICY, etc.), copy ZIP codes, and register the tenant.
+              </Alert>
+            )}
+
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 4 }}>
                 <TextField
@@ -2318,6 +2423,8 @@ export default function App() {
                   fullWidth
                   required
                   value={tenantForm.tenantId}
+                  disabled={isNewTenant}
+                  helperText={isNewTenant ? "Auto-populated PK" : undefined}
                   onChange={(e) => setTenantForm({ ...tenantForm, tenantId: e.target.value })}
                 />
               </Grid>
@@ -2328,6 +2435,7 @@ export default function App() {
                   fullWidth
                   required
                   value={tenantForm.tenantName}
+                  placeholder="e.g. Liberty Bibberty"
                   onChange={(e) => setTenantForm({ ...tenantForm, tenantName: e.target.value })}
                 />
               </Grid>
@@ -2352,6 +2460,44 @@ export default function App() {
                 />
               </Grid>
             </Grid>
+
+            {isNewTenant && (
+              <Box sx={{ p: 1.5, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0' }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', display: 'block', mb: 0.5 }}>
+                  DATABASE PROVISIONING OPTIONS:
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={Boolean(tenantForm.createDatabase)}
+                      onChange={(e) => setTenantForm({ ...tenantForm, createDatabase: e.target.checked })}
+                    />
+                  }
+                  label={<Typography variant="body2" sx={{ fontSize: '0.82rem' }}>Create database on server if missing</Typography>}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={Boolean(tenantForm.copySchema)}
+                      onChange={(e) => setTenantForm({ ...tenantForm, copySchema: e.target.checked })}
+                    />
+                  }
+                  label={<Typography variant="body2" sx={{ fontSize: '0.82rem' }}>Clone 12 Core Tables &amp; Reference ZIP codes</Typography>}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={Boolean(tenantForm.seedInitialData)}
+                      onChange={(e) => setTenantForm({ ...tenantForm, seedInitialData: e.target.checked })}
+                    />
+                  }
+                  label={<Typography variant="body2" sx={{ fontSize: '0.82rem' }}>Seed default accounts, party &amp; sample tasks</Typography>}
+                />
+              </Box>
+            )}
 
             <Divider />
             <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -2434,12 +2580,52 @@ export default function App() {
             </Box>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setOpenTenantDialog(false)}>Cancel</Button>
-            <Button type="submit" variant="contained">
-              Save Tenant Config
+            <Button onClick={() => setOpenTenantDialog(false)} disabled={isProvisioning}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={isProvisioning} startIcon={isProvisioning ? <CircularProgress size={16} color="inherit" /> : null}>
+              {isProvisioning ? 'Provisioning...' : (isNewTenant ? 'Provision Tenant & Database' : 'Save Tenant Config')}
             </Button>
           </DialogActions>
         </form>
+      </Dialog>
+
+      {/* Delete Tenant Confirmation Dialog */}
+      <Dialog
+        open={Boolean(tenantToDelete)}
+        onClose={() => !isDeletingTenant && setTenantToDelete(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#dc2626' }}>
+          <AlertCircle size={22} color="#dc2626" />
+          Confirm Delete Tenant
+        </DialogTitle>
+        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Typography variant="body1">
+            Are you sure you want to remove tenant <strong>#{tenantToDelete?.tenantId} - {tenantToDelete?.tenantName}</strong> from the application?
+          </Typography>
+          <Alert severity="warning" sx={{ fontSize: '0.875rem' }}>
+            <strong>Database Preservation Notice:</strong> This action only removes the tenant's registration and roles from the application master configuration (<code>MSTR_DATA.dbo.TENANT_DB_CONFIG</code>).
+            <br /><br />
+            <strong>The physical SQL database (<code>{tenantToDelete?.dbCatalogName}</code>) on <code>{tenantToDelete?.dbServerName}</code> will NOT be deleted or dropped.</strong> All underlying tables, records, and schemas remain completely preserved on the database server.
+          </Alert>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setTenantToDelete(null)}
+            disabled={isDeletingTenant}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeleteTenant}
+            color="error"
+            variant="contained"
+            disabled={isDeletingTenant}
+            startIcon={isDeletingTenant ? <CircularProgress size={16} color="inherit" /> : <Trash2 size={16} />}
+          >
+            {isDeletingTenant ? 'Removing...' : 'Confirm Delete'}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {/* Role & RBAC Customization Dialog */}
