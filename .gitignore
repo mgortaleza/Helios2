@@ -1,0 +1,35 @@
+# Maven / Java
+target/
+**/target/
+!.mvn/wrapper/maven-wrapper.jar
+*.log
+*.class
+*.war
+*.jar
+*.ear
+
+# Node / Vite Frontend
+**/node_modules/
+**/dist/
+**/.vite/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# Built static bundle (generated from frontend/dist)
+src/main/resources/static/
+
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+chrome_temp_profile/
+chrome_temp_profile*/
+temp_edge/
+helios-admin/frontend/dist/
+helios-admin/frontend/build_dist/
+
+
