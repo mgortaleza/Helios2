@@ -27,6 +27,7 @@ import com.example.helios2.service.HeliosService.PolicyDto;
 import com.example.helios2.service.HeliosService.QuoteDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
 import com.example.helios2.service.HeliosService.TaskDto;
+import com.example.helios2.service.HeliosService.ZipCodeDto;
 import com.example.helios2.service.TenantRegistryService;
 import com.example.helios2.tenant.TenantConfig;
 import com.example.helios2.tenant.TenantContext;
@@ -216,6 +217,15 @@ public class HeliosController {
                 request.changeReason()
         );
         return ResponseEntity.ok(updated);
+    }
+
+    @GetMapping("/zip-codes/{zipCode}")
+    public ResponseEntity<ZipCodeDto> lookupZipCode(@PathVariable("zipCode") String zipCode) {
+        ZipCodeDto dto = heliosService.lookupZipCode(zipCode);
+        if (dto == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(dto);
     }
 
     @GetMapping("/claims")

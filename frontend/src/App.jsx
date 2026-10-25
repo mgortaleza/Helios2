@@ -41,6 +41,7 @@ import {
   DialogActions,
   Alert,
   CircularProgress,
+  InputAdornment,
   Menu as MuiMenu
 } from '@mui/material';
 import {
@@ -1318,6 +1319,75 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
     }
   };
 
+  const [zipLookupLoading, setZipLookupLoading] = useState(false);
+  const [partyZipMatch, setPartyZipMatch] = useState(null);
+  const [editZipMatch, setEditZipMatch] = useState(null);
+
+  const lookupZip = useCallback(
+    async (zip) => {
+      const clean = String(zip || '').trim().replace(/[^\d]/g, '');
+      if (clean.length === 5) {
+        try {
+          setZipLookupLoading(true);
+          const data = await apiFetch(`/api/zip-codes/${clean}`);
+          if (data && data.city && data.stateCode) {
+            return data;
+          }
+        } catch (err) {
+          // not found or error, silent fallback
+        } finally {
+          setZipLookupLoading(false);
+        }
+      }
+      return null;
+    },
+    [apiFetch]
+  );
+
+  const handlePartyZipChange = async (e) => {
+    const val = e.target.value;
+    setNewPartyForm((prev) => ({ ...prev, postalCode: val }));
+    const digits = val.replace(/[^\d]/g, '');
+    if (digits.length === 5) {
+      const match = await lookupZip(digits);
+      if (match) {
+        setPartyZipMatch(match);
+        setNewPartyForm((prev) => ({
+          ...prev,
+          city: match.city,
+          stateCode: match.stateCode,
+          county: match.county || prev.county
+        }));
+      } else {
+        setPartyZipMatch(null);
+      }
+    } else {
+      setPartyZipMatch(null);
+    }
+  };
+
+  const handleAddressEditZipChange = async (e) => {
+    const val = e.target.value;
+    setNewAddressData((prev) => ({ ...prev, postalCode: val }));
+    const digits = val.replace(/[^\d]/g, '');
+    if (digits.length === 5) {
+      const match = await lookupZip(digits);
+      if (match) {
+        setEditZipMatch(match);
+        setNewAddressData((prev) => ({
+          ...prev,
+          city: match.city,
+          stateCode: match.stateCode,
+          county: match.county || prev.county
+        }));
+      } else {
+        setEditZipMatch(null);
+      }
+    } else {
+      setEditZipMatch(null);
+    }
+  };
+
   if (selectedSub) {
     return (
       <Box>
@@ -2114,6 +2184,35 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                   }
                 />
               </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="ZIP Code"
+                  size="small"
+                  fullWidth
+                  required
+                  placeholder="e.g. 60611"
+                  value={newPartyForm.postalCode}
+                  onChange={handlePartyZipChange}
+                  helperText={
+                    partyZipMatch
+                      ? `Auto-filled: ${partyZipMatch.city}, ${partyZipMatch.stateCode}`
+                      : 'Enter 5-digit ZIP to auto-populate'
+                  }
+                  slotProps={{
+                    input: {
+                      endAdornment: zipLookupLoading ? (
+                        <InputAdornment position="end">
+                          <CircularProgress size={16} />
+                        </InputAdornment>
+                      ) : partyZipMatch ? (
+                        <InputAdornment position="end">
+                          <CheckCircle2 size={16} color="#16a34a" />
+                        </InputAdornment>
+                      ) : null
+                    }
+                  }}
+                />
+              </Grid>
               <Grid size={{ xs: 12, sm: 5 }}>
                 <TextField
                   label="City"
@@ -2145,19 +2244,6 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                     ))}
                   </Select>
                 </FormControl>
-              </Grid>
-              <Grid size={{ xs: 6, sm: 4 }}>
-                <TextField
-                  label="ZIP Code"
-                  size="small"
-                  fullWidth
-                  required
-                  placeholder="e.g. 60611"
-                  value={newPartyForm.postalCode}
-                  onChange={(e) =>
-                    setNewPartyForm((prev) => ({ ...prev, postalCode: e.target.value }))
-                  }
-                />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
@@ -2249,6 +2335,35 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                       }
                     />
                   </Grid>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      label="ZIP Code"
+                      size="small"
+                      fullWidth
+                      required
+                      placeholder="e.g. 02115"
+                      value={newAddressData.postalCode}
+                      onChange={handleAddressEditZipChange}
+                      helperText={
+                        editZipMatch
+                          ? `Auto-filled: ${editZipMatch.city}, ${editZipMatch.stateCode}`
+                          : 'Enter 5-digit ZIP to auto-populate'
+                      }
+                      slotProps={{
+                        input: {
+                          endAdornment: zipLookupLoading ? (
+                            <InputAdornment position="end">
+                              <CircularProgress size={16} />
+                            </InputAdornment>
+                          ) : editZipMatch ? (
+                            <InputAdornment position="end">
+                              <CheckCircle2 size={16} color="#16a34a" />
+                            </InputAdornment>
+                          ) : null
+                        }
+                      }}
+                    />
+                  </Grid>
                   <Grid size={{ xs: 12, sm: 5 }}>
                     <TextField
                       label="City"
@@ -2280,19 +2395,6 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                         ))}
                       </Select>
                     </FormControl>
-                  </Grid>
-                  <Grid size={{ xs: 6, sm: 4 }}>
-                    <TextField
-                      label="ZIP Code"
-                      size="small"
-                      fullWidth
-                      required
-                      placeholder="e.g. 02115"
-                      value={newAddressData.postalCode}
-                      onChange={(e) =>
-                        setNewAddressData((prev) => ({ ...prev, postalCode: e.target.value }))
-                      }
-                    />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField

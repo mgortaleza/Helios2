@@ -100,6 +100,15 @@ public class HeliosService {
         }
     }
 
+    public record ZipCodeDto(
+            String zipCode,
+            String city,
+            String stateCode,
+            String stateName,
+            String county
+    ) {
+    }
+
     public record SubmissionDto(
             int submsnId,
             String submsnNbr,
@@ -263,6 +272,18 @@ public class HeliosService {
                             CREATED_DT DATETIME2 DEFAULT GETDATE() NOT NULL
                         );
                         CREATE INDEX IX_pt_address_party_active ON dbo.PT_ADDRESS (PARTY_ID, IS_ACTIVE);
+                    IF OBJECT_ID('dbo.REF_ZIP_CODE', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.REF_ZIP_CODE (
+                            ZIP_CODE VARCHAR(10) NOT NULL PRIMARY KEY,
+                            CITY NVARCHAR(100) NOT NULL,
+                            STATE_CODE VARCHAR(2) NOT NULL,
+                            STATE_NAME NVARCHAR(100) NULL,
+                            COUNTY NVARCHAR(100) NULL,
+                            IS_ACTIVE BIT DEFAULT 1 NOT NULL,
+                            CREATED_DT DATETIME2 DEFAULT GETDATE() NOT NULL
+                        );
+                        CREATE INDEX IX_REF_ZIP_STATE_CITY ON dbo.REF_ZIP_CODE(STATE_CODE, CITY);
                     END;
                     """);
 
@@ -1542,5 +1563,73 @@ public class HeliosService {
         } finally {
             TenantContext.setTenantId(prevTenant);
         }
+    }
+
+    public ZipCodeDto lookupZipCode(String zipCode) {
+        if (zipCode == null || zipCode.isBlank()) {
+            return null;
+        }
+        ensureTenantSchema();
+        String cleanZip = zipCode.trim();
+        if (cleanZip.contains("-")) {
+            cleanZip = cleanZip.substring(0, cleanZip.indexOf('-')).trim();
+        }
+        String sql = """
+                SELECT ZIP_CODE, CITY, STATE_CODE, STATE_NAME, COUNTY
+                FROM dbo.REF_ZIP_CODE
+                WHERE ZIP_CODE = ? AND IS_ACTIVE = 1
+                """;
+        List<ZipCodeDto> list = tenantJdbcTemplate.query(sql, (rs, rowNum) -> new ZipCodeDto(
+                rs.getString("ZIP_CODE"),
+                rs.getString("CITY"),
+                rs.getString("STATE_CODE"),
+                rs.getString("STATE_NAME"),
+                rs.getString("COUNTY")
+        ), cleanZip);
+
+        if (!list.isEmpty()) {
+            return list.get(0);
+        }
+
+        try {
+            if (cleanZip.matches("^\\d{5}$")) {
+                java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                        .connectTimeout(java.time.Duration.ofMillis(1200))
+                        .build();
+                java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create("https://api.zippopotam.us/us/" + cleanZip))
+                        .timeout(java.time.Duration.ofMillis(1500))
+                        .header("Accept", "application/json")
+                        .GET()
+                        .build();
+                java.net.http.HttpResponse<String> resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200 && resp.body() != null) {
+                    String body = resp.body();
+                    String place = extractJsonValue(body, "place name");
+                    String stateAbbr = extractJsonValue(body, "state abbreviation");
+                    String stateFull = extractJsonValue(body, "state");
+                    if (place != null && stateAbbr != null) {
+                        tenantJdbcTemplate.update("""
+                                IF NOT EXISTS (SELECT 1 FROM dbo.REF_ZIP_CODE WHERE ZIP_CODE = ?)
+                                INSERT INTO dbo.REF_ZIP_CODE (ZIP_CODE, CITY, STATE_CODE, STATE_NAME, COUNTY, IS_ACTIVE)
+                                VALUES (?, ?, ?, ?, NULL, 1)
+                                """, cleanZip, cleanZip, place, stateAbbr, stateFull);
+                        return new ZipCodeDto(cleanZip, place, stateAbbr, stateFull, null);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return null;
+    }
+
+    private String extractJsonValue(String json, String key) {
+        String pattern = "\"" + key + "\":\\s*\"([^\"]+)\"";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(pattern).matcher(json);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
     }
 }
