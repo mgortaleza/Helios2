@@ -966,6 +966,31 @@ const US_STATES = [
   'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
 ];
 
+const INITIAL_ADDRESS_DATA = {
+  line1: '',
+  line2: '',
+  city: '',
+  stateCode: 'IL',
+  postalCode: '',
+  county: '',
+  changeReason: 'Address Relocation / Update'
+};
+
+const INITIAL_PARTY_FORM = {
+  partyType: 'ORGANIZATION',
+  partySubType: 'INSURED',
+  name: '',
+  firstName: '',
+  lastName: '',
+  line1: '',
+  line2: '',
+  city: '',
+  stateCode: 'IL',
+  postalCode: '',
+  county: '',
+  changeReason: 'Initial Address Setup'
+};
+
 // --- 3. Submissions View ---
 const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [subTab, setSubTab] = useState(0);
@@ -981,29 +1006,37 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [addressHistoryList, setAddressHistoryList] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showNewAddressInput, setShowNewAddressInput] = useState(false);
-  const [newAddressData, setNewAddressData] = useState({
-    line1: '',
-    line2: '',
-    city: '',
-    stateCode: 'IL',
-    postalCode: '',
-    county: '',
-    changeReason: 'Address Relocation / Update'
-  });
-  const [newPartyForm, setNewPartyForm] = useState({
-    partyType: 'ORGANIZATION',
-    partySubType: 'INSURED',
-    name: '',
-    firstName: '',
-    lastName: '',
-    line1: '',
-    line2: '',
-    city: '',
-    stateCode: 'IL',
-    postalCode: '',
-    county: '',
-    changeReason: 'Initial Address Setup'
-  });
+  const [newAddressData, setNewAddressData] = useState(INITIAL_ADDRESS_DATA);
+  const [newPartyForm, setNewPartyForm] = useState(INITIAL_PARTY_FORM);
+  const [zipLookupLoading, setZipLookupLoading] = useState(false);
+  const [partyZipMatch, setPartyZipMatch] = useState(null);
+  const [editZipMatch, setEditZipMatch] = useState(null);
+
+  const resetAddressForm = () => {
+    setNewAddressData(INITIAL_ADDRESS_DATA);
+    setEditZipMatch(null);
+    setShowNewAddressInput(false);
+  };
+
+  const resetPartyForm = () => {
+    setNewPartyForm(INITIAL_PARTY_FORM);
+    setPartyZipMatch(null);
+  };
+
+  const handleOpenAddParty = () => {
+    resetPartyForm();
+    setOpenAddOrg(true);
+  };
+
+  const handleCloseAddParty = () => {
+    setOpenAddOrg(false);
+    resetPartyForm();
+  };
+
+  const handleCloseAddressHistory = () => {
+    setOpenAddressHistory(false);
+    resetAddressForm();
+  };
   const [ratingSubForQuote, setRatingSubForQuote] = useState(null);
   const [inspectingQuoteDetail, setInspectingQuoteDetail] = useState(null);
   const [flash, setFlash] = useState(null);
@@ -1236,20 +1269,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
         body: JSON.stringify(payload)
       });
       setOpenAddOrg(false);
-      setNewPartyForm({
-        partyType: 'ORGANIZATION',
-        partySubType: 'INSURED',
-        name: '',
-        firstName: '',
-        lastName: '',
-        line1: '',
-        line2: '',
-        city: '',
-        stateCode: 'IL',
-        postalCode: '',
-        county: '',
-        changeReason: 'Initial Address Setup'
-      });
+      resetPartyForm();
       await loadParties(partySearch, partyTypeFilter);
       setSelectedPartyId(created.id);
       setSubTab(1);
@@ -1262,8 +1282,8 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const handleOpenAddressHistory = async (party, e) => {
     if (e) e.stopPropagation();
     setPartyForAddress(party);
+    resetAddressForm();
     setOpenAddressHistory(true);
-    setShowNewAddressInput(false);
     setLoadingHistory(true);
     try {
       const history = await apiFetch(`/api/parties/${party.id}/addresses`);
@@ -1300,16 +1320,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
       });
 
       setFlash({ type: 'success', text: `Updated address for ${partyForAddress.name}!` });
-      setShowNewAddressInput(false);
-      setNewAddressData({
-        line1: '',
-        line2: '',
-        city: '',
-        stateCode: 'IL',
-        postalCode: '',
-        county: '',
-        changeReason: 'Address Relocation / Update'
-      });
+      resetAddressForm();
 
       const history = await apiFetch(`/api/parties/${partyForAddress.id}/addresses`);
       setAddressHistoryList(Array.isArray(history) ? history : []);
@@ -1318,10 +1329,6 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
       setFlash({ type: 'error', text: `Failed to update address: ${err.message}` });
     }
   };
-
-  const [zipLookupLoading, setZipLookupLoading] = useState(false);
-  const [partyZipMatch, setPartyZipMatch] = useState(null);
-  const [editZipMatch, setEditZipMatch] = useState(null);
 
   const lookupZip = useCallback(
     async (zip) => {
@@ -1627,7 +1634,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             color="primary"
             startIcon={<Plus size={16} />}
             disabled={!canAddOrganization}
-            onClick={() => setOpenAddOrg(true)}
+            onClick={handleOpenAddParty}
           >
             {canAddOrganization ? 'Add Party / Organization' : 'Add Party (Restricted)'}
           </Button>
@@ -2050,7 +2057,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
       </Dialog>
 
       {/* Enhanced Add Party / Organization Dialog with Classification and US Address */}
-      <Dialog open={openAddOrg} onClose={() => setOpenAddOrg(false)} maxWidth="sm" fullWidth>
+      <Dialog open={openAddOrg} onClose={handleCloseAddParty} maxWidth="sm" fullWidth>
         <form onSubmit={handleAddParty}>
           <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Building2 size={22} color="#0284c7" />
@@ -2272,7 +2279,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             </Grid>
           </DialogContent>
           <DialogActions sx={{ p: 2 }}>
-            <Button onClick={() => setOpenAddOrg(false)}>Cancel</Button>
+            <Button onClick={handleCloseAddParty}>Cancel</Button>
             <Button type="submit" variant="contained" color="primary">
               Save Party &amp; Address
             </Button>
@@ -2283,7 +2290,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
       {/* Address History & Tracking Dialog */}
       <Dialog
         open={openAddressHistory}
-        onClose={() => setOpenAddressHistory(false)}
+        onClose={handleCloseAddressHistory}
         maxWidth="md"
         fullWidth
       >
@@ -2297,7 +2304,15 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             variant={showNewAddressInput ? 'outlined' : 'contained'}
             color="primary"
             startIcon={showNewAddressInput ? undefined : <Plus size={16} />}
-            onClick={() => setShowNewAddressInput((prev) => !prev)}
+            onClick={() => {
+              if (showNewAddressInput) {
+                resetAddressForm();
+              } else {
+                setNewAddressData(INITIAL_ADDRESS_DATA);
+                setEditZipMatch(null);
+                setShowNewAddressInput(true);
+              }
+            }}
           >
             {showNewAddressInput ? 'Close Form' : '+ Record New Address'}
           </Button>
@@ -2422,7 +2437,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                     />
                   </Grid>
                   <Grid size={{ xs: 12 }} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5 }}>
-                    <Button size="small" onClick={() => setShowNewAddressInput(false)}>
+                    <Button size="small" onClick={resetAddressForm}>
                       Cancel
                     </Button>
                     <Button type="submit" size="small" variant="contained" color="success">
@@ -2512,7 +2527,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenAddressHistory(false)}>Close</Button>
+          <Button onClick={handleCloseAddressHistory}>Close</Button>
         </DialogActions>
       </Dialog>
 
