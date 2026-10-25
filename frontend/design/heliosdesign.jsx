@@ -54,7 +54,7 @@ import {
 const heliosTheme = createTheme({
   palette: {
     primary: {
-      main: '#004812', // W.R. Berkley inspired Dark Green
+      main: '#004812', 
       light: '#336c41',
       dark: '#00320c',
     },
