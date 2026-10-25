@@ -40,7 +40,7 @@ export function HeliosAppBar() {
   return (
     <AppBar
       color="primary"
-       sx={{
+      sx={{
         backgroundColor: '#0f172a',
         '& .RaAppBar-toolbar': {
           gap: 1.5,
@@ -143,4 +143,3 @@ export function HeliosMenu() {
 export function HeliosLayout(props) {
   return <Layout {...props} appBar={HeliosAppBar} menu={HeliosMenu} />;
 }
-

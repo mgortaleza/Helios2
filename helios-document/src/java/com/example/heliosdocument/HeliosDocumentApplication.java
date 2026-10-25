@@ -1,0 +1,20 @@
+package com.example.heliosdocument;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
+
+@SpringBootApplication
+public class HeliosDocumentApplication extends SpringBootServletInitializer {
+
+    @Override
+    protected SpringApplicationBuilder configure(SpringApplicationBuilder builder) {
+        return builder.sources(HeliosDocumentApplication.class);
+    }
+
+    public static void main(String[] args) {
+        SpringApplication.run(HeliosDocumentApplication.class, args);
+    }
+}
+
