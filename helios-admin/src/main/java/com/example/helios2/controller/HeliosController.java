@@ -338,9 +338,13 @@ public class HeliosController {
                 Map<?, ?> parsed = mapper.readValue(content, Map.class);
                 parsed.forEach((k, v) -> result.put(String.valueOf(k), v));
 
-                if (secondsAgo <= 180) {
+                if (secondsAgo <= 300) {
                     result.put("status", "UP");
                     result.put("health", "ONLINE");
+                } else if (parsed.get("lastError") == null) {
+                    result.put("status", "UP");
+                    result.put("health", "IDLE");
+                    result.put("warning", "Daemon idle: last run was " + secondsAgo + "s ago");
                 } else {
                     result.put("status", "DEGRADED");
                     result.put("health", "STALE");
