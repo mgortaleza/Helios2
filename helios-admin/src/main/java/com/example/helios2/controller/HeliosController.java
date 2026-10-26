@@ -300,6 +300,67 @@ public class HeliosController {
         return result;
     }
 
+    @GetMapping("/diagnostics/gmailcap")
+    public ResponseEntity<Map<String, Object>> getGmailCapDiagnostics() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("service", "gmailcap");
+        result.put("application", "Helios GmailCap Python Ingestion Service");
+        result.put("executionMode", "Python Scheduled Daemon");
+        result.put("interval", "60s (Every 1 minute)");
+        result.put("targetInbox", "C:\\helios-storage\\documents\\tenant_1\\inbox");
+        result.put("logDirectory", "C:\\helios-storage\\logs");
+        result.put("serverTime", LocalDateTime.now().toString());
+
+        List<java.nio.file.Path> candidates = List.of(
+                java.nio.file.Path.of("C:", "helios-storage", "logs", "gmailcap_status.json"),
+                java.nio.file.Path.of("C:", "helios-storage", "log", "gmailcap_status.json"),
+                java.nio.file.Path.of("C:", "helios-storage", "logs", "gmailcap.json"),
+                java.nio.file.Path.of("C:", "helios-storage", "gmailcap_status.json")
+        );
+
+        java.nio.file.Path found = null;
+        for (java.nio.file.Path p : candidates) {
+            if (java.nio.file.Files.exists(p)) {
+                found = p;
+                break;
+            }
+        }
+
+        if (found != null) {
+            try {
+                long lastModified = java.nio.file.Files.getLastModifiedTime(found).toMillis();
+                long secondsAgo = Math.max(0, (System.currentTimeMillis() - lastModified) / 1000);
+                result.put("statusFile", found.toString());
+                result.put("lastModifiedSecondsAgo", secondsAgo);
+
+                String content = java.nio.file.Files.readString(found);
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                Map<?, ?> parsed = mapper.readValue(content, Map.class);
+                parsed.forEach((k, v) -> result.put(String.valueOf(k), v));
+
+                if (secondsAgo <= 180) {
+                    result.put("status", "UP");
+                    result.put("health", "ONLINE");
+                } else {
+                    result.put("status", "DEGRADED");
+                    result.put("health", "STALE");
+                    result.put("warning", "Heartbeat stale: last run was " + secondsAgo + "s ago (expected every 60s)");
+                }
+            } catch (Exception e) {
+                result.put("status", "DEGRADED");
+                result.put("health", "PARSE_ERROR");
+                result.put("error", "Error reading status file: " + e.getMessage());
+            }
+        } else {
+            result.put("status", "UP");
+            result.put("health", "PENDING_FIRST_RUN");
+            result.put("statusFileExpected", "C:\\helios-storage\\logs\\gmailcap_status.json");
+            result.put("note", "Log folder active. Waiting for Python service to output heartbeat JSON.");
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
     public record LoginRequest(Integer tenantId, String username, String password) {}
 
     @GetMapping("/auth/users")

@@ -68,6 +68,7 @@ import {
   HardDrive,
   FileText,
   Printer,
+  Mail,
   Zap,
   AlertCircle,
   Layers,
@@ -141,6 +142,9 @@ const MODULE_OPTIONS = [
 ];
 
 function StatusBadge({ ok, label }) {
+  const isWarn = label === 'STALE' || label === 'WAITING';
+  const bg = isWarn ? '#fef3c7' : ok ? '#dcfce7' : '#fee2e2';
+  const text = isWarn ? '#b45309' : ok ? '#15803d' : '#dc2626';
   return (
     <Box
       component="span"
@@ -151,8 +155,8 @@ function StatusBadge({ ok, label }) {
         borderRadius: '999px',
         fontSize: '0.74rem',
         fontWeight: 600,
-        backgroundColor: ok ? '#dcfce7' : '#fee2e2',
-        color: ok ? '#15803d' : '#dc2626'
+        backgroundColor: bg,
+        color: text
       }}
     >
       {label}
@@ -236,6 +240,7 @@ const resolveServiceIcon = (iconName, color = '#38bdf8', size = 22) => {
     case 'calculator': return <Calculator {...iconProps} />;
     case 'filetext': case 'file': return <FileText {...iconProps} />;
     case 'printer': return <Printer {...iconProps} />;
+    case 'mail': case 'inbox': return <Mail {...iconProps} />;
     case 'cpu': return <Cpu {...iconProps} />;
     case 'database': return <Database {...iconProps} />;
     case 'harddrive': return <HardDrive {...iconProps} />;
@@ -1838,7 +1843,7 @@ export default function App() {
 
                                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <LatencyBadge ms={svc.diag?.latency} />
-                                    <StatusBadge ok={isUp} label={isUp ? 'ONLINE' : 'OFFLINE'} />
+                                    <StatusBadge ok={!isUp ? false : (data.health === 'STALE' ? false : true)} label={!isUp ? 'OFFLINE' : (data.health === 'STALE' ? 'STALE' : (data.health === 'PENDING_FIRST_RUN' ? 'WAITING' : 'ONLINE'))} />
                                   </Box>
                                 </Box>
 
@@ -1847,7 +1852,7 @@ export default function App() {
                                 {/* Host / Port / Windows Service Info */}
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                                   <Chip
-                                    label={`Port: ${svc.port}`}
+                                    label={svc.port === '0' || !svc.port ? 'Mode: Daemon (1m)' : `Port: ${svc.port}`}
                                     size="small"
                                     sx={{ fontSize: '0.74rem', fontWeight: 600, bgcolor: '#f1f5f9', color: '#0f172a' }}
                                   />
@@ -1949,6 +1954,54 @@ export default function App() {
                                             <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
                                               {data.documentsIssuedCount != null ? data.documentsIssuedCount : 0} Documents Issued &bull; Storage: <code>{data.storagePath || 'C:\\helios-storage\\documents'}</code>
                                             </Typography>
+                                          </Grid>
+                                        </>
+                                      )}
+
+                                      {svc.id === 'gmailcap' && (
+                                        <>
+                                          <Grid size={{ xs: 6 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              EXECUTION CADENCE
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                                              {data.interval || 'Every 1 minute'}
+                                            </Typography>
+                                          </Grid>
+                                          <Grid size={{ xs: 6 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              HEARTBEAT RECENCY
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 700, color: data.health === 'ONLINE' ? '#16a34a' : (data.health === 'STALE' ? '#d97706' : '#64748b') }}>
+                                              {data.lastModifiedSecondsAgo != null
+                                                ? `${data.lastModifiedSecondsAgo}s ago`
+                                                : (data.health === 'PENDING_FIRST_RUN' ? 'Awaiting first run' : 'N/A')}
+                                            </Typography>
+                                          </Grid>
+                                          <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                              GMAIL INTAKE &amp; STORAGE STATUS
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                              Target: <code>{data.targetInbox || 'C:\\helios-storage\\documents\\tenant_1\\inbox'}</code>
+                                              {data.emailsIngested != null && ` • ${data.emailsIngested} Emails Ingested`}
+                                              {data.lastRun && ` • Last Poll: ${data.lastRun}`}
+                                            </Typography>
+                                            {data.statusFile && (
+                                              <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mt: 0.5 }}>
+                                                Status Source: <code>{data.statusFile}</code>
+                                              </Typography>
+                                            )}
+                                            {data.note && (
+                                              <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mt: 0.5, fontStyle: 'italic' }}>
+                                                {data.note}
+                                              </Typography>
+                                            )}
+                                            {data.warning && (
+                                              <Alert severity="warning" sx={{ mt: 1, py: 0.2, fontSize: '0.78rem' }}>
+                                                {data.warning}
+                                              </Alert>
+                                            )}
                                           </Grid>
                                         </>
                                       )}

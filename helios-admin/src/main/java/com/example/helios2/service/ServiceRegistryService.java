@@ -91,6 +91,7 @@ public class ServiceRegistryService {
                             ('rating', 'HeliosRating Rules & SERFF Engine', 'HeliosRating', 'Multi-state statutory filings, schedule caps & rating algorithms', 8084, 'Tomcat11Rating', '/rating-api/diagnostics', '#0284c7', 'Calculator', 3, 0),
                             ('document', 'HeliosDocument Repository & Lifecycle', 'HeliosDocument', 'SQL Server metadata tracking, disk storage, retrieval, preview & lifecycle', 8086, 'Tomcat11Document', '/document-api/documents/diagnostics', '#7c3aed', 'FileText', 4, 1),
                             ('docgen', 'HeliosDocgen Dedicated PDF Engine', 'HeliosDocgen', 'Isolated high-performance Aspose.PDF generation engine (Dec pages, binders, proposals)', 8088, 'Tomcat11Docgen', '/docgen-api/diagnostics', '#d97706', 'Printer', 5, 0);
+                            ('gmailcap', 'Helios GmailCap Mail Intake', 'GmailCap', 'Automated Python Gmail poller (60s) capturing submissions, EML & attachments', 0, 'gmailcap.py (1m interval)', '/api/diagnostics/gmailcap', '#ea4335', 'Mail', 6, 0);
                     END
                     """);
             log.info("Verified dbo.MSTR_SERVICE_CATALOG schema in MSTR_DATA");
