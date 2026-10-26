@@ -26,6 +26,9 @@ public class MultiTenantConfig {
     @Value("${helios2.db.default-tenant-catalog:HELIOS2_TST}")
     private String defaultTenantCatalog;
 
+    @Value("${helios2.db.rating-catalog:Helios_Rating_DB}")
+    private String ratingCatalog;
+
     @Bean(name = "masterDataSource")
     public DataSource masterDataSource(SqlServerDataSourceFactory factory) {
         return factory.createDataSource("Helios2-Master-MSTR_DATA", dbServer, masterCatalog);
@@ -34,6 +37,16 @@ public class MultiTenantConfig {
     @Bean(name = "masterJdbcTemplate")
     public JdbcTemplate masterJdbcTemplate(@Qualifier("masterDataSource") DataSource masterDataSource) {
         return new JdbcTemplate(masterDataSource);
+    }
+
+    @Bean(name = "ratingDataSource")
+    public DataSource ratingDataSource(SqlServerDataSourceFactory factory) {
+        return factory.createDataSource("Helios2-Rating-Helios_Rating_DB", dbServer, ratingCatalog);
+    }
+
+    @Bean(name = "ratingJdbcTemplate")
+    public JdbcTemplate ratingJdbcTemplate(@Qualifier("ratingDataSource") DataSource ratingDataSource) {
+        return new JdbcTemplate(ratingDataSource);
     }
 
     @Bean(name = "tenantRoutingDataSource")
@@ -68,4 +81,3 @@ public class MultiTenantConfig {
         };
     }
 }
-
