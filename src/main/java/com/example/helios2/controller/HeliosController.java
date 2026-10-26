@@ -330,42 +330,80 @@ public class HeliosController {
     @PostMapping("/auth/login")
     public ResponseEntity<?> login(
             @RequestParam(name = "tenantId", required = false) Integer queryTenantId,
-            @RequestBody LoginRequest req) {
+            @RequestBody LoginRequest req,
+            jakarta.servlet.http.HttpServletRequest request) {
         int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId()
                 : (queryTenantId != null && queryTenantId > 0) ? queryTenantId
                 : TenantContext.getTenantId();
+
+        if (!tenantRegistryService.isValidTenantId(tenantId)) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "Tenant realm #" + tenantId + " does not exist."));
+        }
+
         TenantContext.setTenantId(tenantId);
         Map<String, Object> result = heliosService.authenticate(tenantId, req.username(), req.password());
         if (Boolean.TRUE.equals(result.get("success"))) {
+            jakarta.servlet.http.HttpSession session = request.getSession(true);
+            session.setAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER, result.get("user"));
+            session.setAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID, tenantId);
             return ResponseEntity.ok(result);
         } else {
             return ResponseEntity.status(401).body(result);
         }
     }
 
+    @PostMapping("/auth/logout")
+    public ResponseEntity<?> logout(jakarta.servlet.http.HttpServletRequest request) {
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.removeAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER);
+            session.removeAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID);
+            session.invalidate();
+        }
+        TenantContext.clear();
+        return ResponseEntity.ok(Map.of("success", true, "message", "Session invalidated and cached tenant context reset."));
+    }
+
+    @GetMapping("/auth/session")
+    public ResponseEntity<?> getAuthSession(jakarta.servlet.http.HttpServletRequest request) {
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER) != null) {
+            return ResponseEntity.ok(Map.of(
+                    "authenticated", true,
+                    "user", session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER),
+                    "tenantId", session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID)
+            ));
+        }
+        return ResponseEntity.ok(Map.of("authenticated", false));
+    }
+
     @GetMapping("/users")
-    public List<HeliosService.AppUserDto> getUsers(
-            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
-        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
-        TenantContext.setTenantId(tenantId);
+    public List<HeliosService.AppUserDto> getUsers() {
+        int tenantId = TenantContext.getTenantId();
         return heliosService.getAllUsers(tenantId);
     }
 
     @PostMapping("/users")
-    public ResponseEntity<HeliosService.AppUserDto> createUser(@RequestBody HeliosService.AppUserDto user) {
-        TenantContext.setTenantId(user.tenantId());
+    public ResponseEntity<?> createUser(@RequestBody HeliosService.AppUserDto user) {
+        int activeTenantId = TenantContext.getTenantId();
+        if (user.tenantId() != activeTenantId) {
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden", "message", "Cross-tenant access violation: user tenant does not match active realm."));
+        }
         HeliosService.AppUserDto saved = heliosService.saveUser(user);
         return ResponseEntity.ok(saved);
     }
 
     @org.springframework.web.bind.annotation.PutMapping("/users/{userId}")
-    public ResponseEntity<HeliosService.AppUserDto> updateUser(
+    public ResponseEntity<?> updateUser(
             @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
             @RequestBody HeliosService.AppUserDto user) {
-        TenantContext.setTenantId(user.tenantId());
+        int activeTenantId = TenantContext.getTenantId();
+        if (user.tenantId() != activeTenantId) {
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden", "message", "Cross-tenant access violation: user tenant does not match active realm."));
+        }
         HeliosService.AppUserDto toSave = new HeliosService.AppUserDto(
                 userId,
-                user.tenantId(),
+                activeTenantId,
                 user.username(),
                 user.email(),
                 user.displayName(),
@@ -384,9 +422,8 @@ public class HeliosController {
 
     @org.springframework.web.bind.annotation.DeleteMapping("/users/{userId}")
     public ResponseEntity<Map<String, Object>> deleteUser(
-            @org.springframework.web.bind.annotation.PathVariable("userId") int userId,
-            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
-        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : TenantContext.getTenantId();
+            @org.springframework.web.bind.annotation.PathVariable("userId") int userId) {
+        int tenantId = TenantContext.getTenantId();
         boolean ok = heliosService.deleteUser(userId, tenantId);
         return ResponseEntity.ok(Map.of("success", ok, "userId", userId));
     }

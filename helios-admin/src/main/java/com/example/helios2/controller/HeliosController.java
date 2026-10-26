@@ -301,17 +301,51 @@ public class HeliosController {
     @PostMapping("/auth/login")
     public ResponseEntity<?> login(
             @RequestParam(name = "tenantId", required = false) Integer queryTenantId,
-            @RequestBody LoginRequest req) {
+            @RequestBody LoginRequest req,
+            jakarta.servlet.http.HttpServletRequest request) {
         int tenantId = (req.tenantId() != null && req.tenantId() > 0) ? req.tenantId()
                 : (queryTenantId != null && queryTenantId > 0) ? queryTenantId
                 : TenantContext.getTenantId();
+
+        if (!tenantRegistryService.isValidTenantId(tenantId)) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "Tenant realm #" + tenantId + " does not exist."));
+        }
+
         TenantContext.setTenantId(tenantId);
         Map<String, Object> result = heliosService.authenticate(tenantId, req.username(), req.password());
         if (Boolean.TRUE.equals(result.get("success"))) {
+            jakarta.servlet.http.HttpSession session = request.getSession(true);
+            session.setAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER, result.get("user"));
+            session.setAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID, tenantId);
             return ResponseEntity.ok(result);
         } else {
             return ResponseEntity.status(401).body(result);
         }
+    }
+
+    @PostMapping("/auth/logout")
+    public ResponseEntity<?> logout(jakarta.servlet.http.HttpServletRequest request) {
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.removeAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER);
+            session.removeAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID);
+            session.invalidate();
+        }
+        TenantContext.clear();
+        return ResponseEntity.ok(Map.of("success", true, "message", "Session invalidated and cached tenant context reset."));
+    }
+
+    @GetMapping("/auth/session")
+    public ResponseEntity<?> getAuthSession(jakarta.servlet.http.HttpServletRequest request) {
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER) != null) {
+            return ResponseEntity.ok(Map.of(
+                    "authenticated", true,
+                    "user", session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_USER),
+                    "tenantId", session.getAttribute(com.example.helios2.tenant.TenantFilter.SESSION_AUTH_TENANT_ID)
+            ));
+        }
+        return ResponseEntity.ok(Map.of("authenticated", false));
     }
 
     @GetMapping("/users")

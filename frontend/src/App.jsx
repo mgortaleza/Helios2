@@ -6058,7 +6058,6 @@ const ClaimsView = ({ apiFetch, activeTenantId, activeRole }) => {
 const DiagnosticsView = ({
   apiFetch,
   activeTenantId,
-  setActiveTenantId,
   tenants,
   reloadTenants
 }) => {
@@ -6407,13 +6406,7 @@ const DiagnosticsView = ({
                               {isActive ? (
                                 <StatusPill status="Active" />
                               ) : (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => setActiveTenantId(t.tenantId)}
-                                >
-                                  Switch Tenant
-                                </Button>
+                                <Chip label={`Realm #${t.tenantId}`} size="small" variant="outlined" sx={{ fontSize: '0.72rem', color: '#64748b' }} />
                               )}
                             </Box>
                           </TableCell>
@@ -6578,7 +6571,16 @@ const DiagnosticsView = ({
 
 // --- Enterprise Login & Multi-Tenant Authentication View ---
 const LoginView = ({ onLoginSuccess, tenants = [] }) => {
-  const [selectedTenantId, setSelectedTenantId] = useState(1);
+  const [selectedTenantId, setSelectedTenantId] = useState(() => {
+    try {
+      const saved = localStorage.getItem('helios_selected_tenant_id');
+      if (saved) {
+        const id = Number(saved);
+        if (id > 0) return id;
+      }
+    } catch {}
+    return 1;
+  });
   const [username, setUsername] = useState('mchang');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -6755,7 +6757,13 @@ const LoginView = ({ onLoginSuccess, tenants = [] }) => {
                 labelId="tenant-select-label"
                 label="Target Tenant Realm"
                 value={selectedTenantId}
-                onChange={(e) => setSelectedTenantId(e.target.value)}
+                onChange={(e) => {
+                  const newId = Number(e.target.value);
+                  setSelectedTenantId(newId);
+                  try {
+                    localStorage.setItem('helios_selected_tenant_id', String(newId));
+                  } catch {}
+                }}
               >
                 {tenants.map((t) => (
                   <MenuItem key={t.tenantId} value={t.tenantId}>
@@ -7009,6 +7017,8 @@ export default function App() {
         const u = JSON.parse(saved);
         if (u.tenantId) return Number(u.tenantId);
       }
+      const savedTenant = localStorage.getItem('helios_selected_tenant_id');
+      if (savedTenant) return Number(savedTenant);
     } catch {}
     return 1;
   });
@@ -7022,7 +7032,6 @@ export default function App() {
     } catch {}
     return 'EXECUTIVE';
   });
-  const [tenantMenuAnchor, setTenantMenuAnchor] = useState(null);
   const [roleMenuAnchor, setRoleMenuAnchor] = useState(null);
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
 
@@ -7033,18 +7042,29 @@ export default function App() {
     if (user.roleCode) {
       setActiveRoleCode(user.roleCode);
     }
-    localStorage.setItem('helios_auth_user', JSON.stringify(userWithTenant));
+    try {
+      localStorage.setItem('helios_auth_user', JSON.stringify(userWithTenant));
+      localStorage.setItem('helios_selected_tenant_id', String(tenantId));
+    } catch {}
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    } catch {}
     setCurrentUser(null);
-    localStorage.removeItem('helios_auth_user');
+    setActiveTenantId(1);
+    try {
+      localStorage.removeItem('helios_auth_user');
+      localStorage.removeItem('helios_selected_tenant_id');
+      sessionStorage.clear();
+    } catch {}
   };
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
       const headers = {
-        'X-Tenant-ID': String(activeTenantId),
+        'X-Tenant-ID': String(currentUser?.tenantId || activeTenantId),
         ...(options.headers || {})
       };
       if (!(options.body instanceof FormData) && !headers['Content-Type']) {
@@ -7052,12 +7072,15 @@ export default function App() {
       }
       const response = await fetch(path, { ...options, headers });
       if (!response.ok) {
+        if (response.status === 401) {
+          handleLogout();
+        }
         const errText = await response.text();
         throw new Error(errText || `HTTP ${response.status}`);
       }
       return response.json();
     },
-    [activeTenantId]
+    [currentUser?.tenantId, activeTenantId]
   );
 
   const reloadTenants = useCallback(async () => {
@@ -7286,110 +7309,86 @@ export default function App() {
 
           <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.08)' }} />
 
-          {/* Dark Translucent Tenant Selector Box */}
+          {/* Tenant Company Information & Logo (Static Realm Display - Dynamic Switching Removed) */}
           <Box sx={{ px: sidebarCollapsed ? 1.25 : 2, py: 2 }}>
             <Box
-              title={`Tenant: ${getTenantShortLabel(currentTenant)}`}
-              onClick={(e) => setTenantMenuAnchor(e.currentTarget)}
+              title={`${currentTenant?.tenantName || 'Tenant'} (${currentTenant?.dbCatalogName || ''})`}
               sx={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
                 p: sidebarCollapsed ? 0.9 : 1.25,
                 borderRadius: '10px',
                 backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                cursor: 'pointer',
-                transition: 'background-color 0.15s ease',
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)'
-                }
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                userSelect: 'none'
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, overflow: 'hidden' }}>
                 <Avatar
                   sx={{
-                    width: 32,
-                    height: 32,
-                    fontSize: '0.75rem',
+                    width: 34,
+                    height: 34,
+                    fontSize: '0.78rem',
                     fontWeight: 700,
-                    bgcolor: 'rgba(255, 255, 255, 0.15)',
-                    color: '#ffffff'
+                    bgcolor: accentColor || '#f59e0b',
+                    color: '#000000',
+                    border: '2px solid rgba(255, 255, 255, 0.25)',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                   }}
                 >
                   {getTenantInitials(currentTenant)}
                 </Avatar>
                 {!sidebarCollapsed && (
-                  <Box sx={{ overflow: 'hidden' }}>
-                    <Typography
-                      sx={{
-                        fontSize: '0.62rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.08em',
-                        color: 'rgba(255, 255, 255, 0.55)',
-                        lineHeight: 1.1
-                      }}
-                    >
-                      TENANT
-                    </Typography>
+                  <Box sx={{ overflow: 'hidden', minWidth: 0 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <Typography
+                        sx={{
+                          fontSize: '0.62rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.09em',
+                          color: 'rgba(255, 255, 255, 0.65)',
+                          lineHeight: 1.1
+                        }}
+                      >
+                        ORGANIZATION
+                      </Typography>
+                      <Box
+                        sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          backgroundColor: '#10b981',
+                          display: 'inline-block'
+                        }}
+                        title="Active Tenant Realm"
+                      />
+                    </Box>
                     <Typography
                       noWrap
                       sx={{
                         fontSize: '0.84rem',
-                        fontWeight: 600,
+                        fontWeight: 700,
                         color: '#ffffff',
                         lineHeight: 1.3
                       }}
                     >
-                      {getTenantShortLabel(currentTenant)}
+                      {currentTenant?.tenantName || getTenantShortLabel(currentTenant)}
+                    </Typography>
+                    <Typography
+                      noWrap
+                      sx={{
+                        fontSize: '0.66rem',
+                        color: 'rgba(255, 255, 255, 0.55)',
+                        lineHeight: 1.2
+                      }}
+                    >
+                      {currentTenant?.brandSubtitle || `Realm #${activeTenantId}`}
                     </Typography>
                   </Box>
                 )}
               </Box>
-              {!sidebarCollapsed && <ChevronsUpDown size={16} color="rgba(255, 255, 255, 0.55)" />}
             </Box>
-
-            <MuiMenu
-              anchorEl={tenantMenuAnchor}
-              open={Boolean(tenantMenuAnchor)}
-              onClose={() => setTenantMenuAnchor(null)}
-              slotProps={{
-                paper: {
-                  sx: { width: 230, mt: 0.5 }
-                }
-              }}
-            >
-              {tenants.map((t) => (
-                <MenuItem
-                  key={t.tenantId}
-                  selected={t.tenantId === Number(activeTenantId)}
-                  onClick={() => {
-                    setActiveTenantId(t.tenantId);
-                    setTenantMenuAnchor(null);
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        backgroundColor: t.primaryColor || '#013a12',
-                        border: `2px solid ${t.accentColor || '#f59e0b'}`
-                      }}
-                    />
-                    <Box>
-                      <Typography variant="body2" fontWeight={600}>
-                        {getTenantShortLabel(t)}
-                      </Typography>
-                      <Typography variant="caption" color="textSecondary">
-                        DB: {t.dbCatalogName}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </MenuItem>
-              ))}
-            </MuiMenu>
           </Box>
 
           {/* Sidebar Navigation Menu */}

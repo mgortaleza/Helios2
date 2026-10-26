@@ -229,6 +229,13 @@ public class TenantRegistryService {
         return results.stream().findFirst();
     }
 
+    public boolean isValidTenantId(int tenantId) {
+        if (tenantId <= 0) {
+            return false;
+        }
+        return getTenantById(tenantId).isPresent();
+    }
+
     public TenantConfig registerOrUpdateTenant(TenantConfig config) {
         ensureMasterUiColumns();
         String primaryColor = (config.primaryColor() != null && !config.primaryColor().isBlank())

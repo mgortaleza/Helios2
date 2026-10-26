@@ -55,8 +55,10 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     Write-Host "Tomcat services restarted."
 }
 
-Write-Host "=== 3. Deploying Admin Frontend Bundle ==="
+Write-Host "=== 3. Deploying Frontend Bundles ==="
+Copy-Item -Path "c:\DEV\helios2\frontend\dist\*" -Destination "\\10.1.10.56\c$\nginx\html\helios2\" -Recurse -Force
+Write-Host "Main frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios2\"
 Copy-Item -Path "c:\DEV\helios2\helios-admin\frontend\dist\*" -Destination "\\10.1.10.56\c$\nginx\html\helios-admin\" -Recurse -Force
-Write-Host "Frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios-admin\"
+Write-Host "Admin frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios-admin\"
 
 Write-Host "=== 4. Deployment Complete! ==="
