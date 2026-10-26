@@ -1,7 +1,9 @@
 package com.example.heliosdocument.service;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +28,7 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.example.heliosdocument.client.DocgenClient;
 import com.example.heliosdocument.model.AttachDocumentRequest;
 import com.example.heliosdocument.model.CreateSubmissionFromDocRequest;
 import com.example.heliosdocument.model.IncomingDocumentDto;
@@ -37,10 +40,19 @@ public class IncomingDocumentService {
 
     private final DocumentService documentService;
     private final DocumentStorageService storageService;
+    private final EmlParserService emlParserService;
+    private final DocgenClient docgenClient;
 
-    public IncomingDocumentService(DocumentService documentService, DocumentStorageService storageService) {
+    public IncomingDocumentService(
+            DocumentService documentService,
+            DocumentStorageService storageService,
+            EmlParserService emlParserService,
+            DocgenClient docgenClient
+    ) {
         this.documentService = documentService;
         this.storageService = storageService;
+        this.emlParserService = emlParserService;
+        this.docgenClient = docgenClient;
     }
 
     /**
@@ -59,10 +71,11 @@ public class IncomingDocumentService {
     /**
      * Scans the inbox folder for a specific tenant:
      * C:\helios-storage\documents\tenant_{tenantId}\inbox\
-     * - Files directly in inbox: standalone incoming documents
+     * - Files directly in inbox: standalone incoming documents (or .eml packages)
      * - Folders in inbox: grouped incoming documents (batch/submission package)
-     * Moves all files to C:\helios-storage\documents\tenant_{tenantId}\queue\
-     * and writes records to dbo.DOC_INCOMING.
+     * Converts .eml email bodies to PDF, extracts all attachments, and moves
+     * files to C:\helios-storage\documents\tenant_{tenantId}\queue\
+     * while writing records to dbo.DOC_INCOMING with group associations intact.
      */
     public synchronized int scanTenantInbox(int tenantId) {
         Path rootStorage = storageService.getRootStoragePath();
@@ -94,9 +107,15 @@ public class IncomingDocumentService {
                         try (DirectoryStream<Path> groupStream = Files.newDirectoryStream(entry)) {
                             for (Path fileInGroup : groupStream) {
                                 if (Files.isRegularFile(fileInGroup)) {
-                                    processedCount += processAndMoveFile(
-                                            jdbc, tenantId, fileInGroup, targetGroupDir, groupId, folderName
-                                    );
+                                    if (isEmlFile(fileInGroup)) {
+                                        processedCount += processEmlFileIntoGroup(
+                                                jdbc, tenantId, fileInGroup, targetGroupDir, groupId, folderName
+                                        );
+                                    } else {
+                                        processedCount += processAndMoveFile(
+                                                jdbc, tenantId, fileInGroup, targetGroupDir, groupId, folderName
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -104,14 +123,27 @@ public class IncomingDocumentService {
                         try {
                             Files.delete(entry);
                         } catch (IOException ignored) {
-                            // Folder might still have unreadable files
                         }
                     } catch (IOException ex) {
                         log.error("Failed to process grouped folder {}: {}", entry, ex.getMessage(), ex);
                     }
                 } else if (Files.isRegularFile(entry)) {
-                    // Standalone document
-                    processedCount += processAndMoveFile(jdbc, tenantId, entry, queueDir, null, null);
+                    // Standalone file in inbox
+                    if (isEmlFile(entry)) {
+                        processedCount += processStandaloneEmlFile(jdbc, tenantId, entry, queueDir);
+                    } else {
+                        // Check if this is a loose companion .txt for an .eml processed concurrently or earlier
+                        String fileName = entry.getFileName().toString();
+                        if (fileName.toLowerCase().endsWith(".txt")) {
+                            String baseName = getBaseName(fileName);
+                            Path potentialEml = inboxDir.resolve(baseName + ".eml");
+                            if (Files.exists(potentialEml)) {
+                                // Will be handled or cleaned up with the .eml
+                                continue;
+                            }
+                        }
+                        processedCount += processAndMoveFile(jdbc, tenantId, entry, queueDir, null, null);
+                    }
                 }
             }
         } catch (IOException e) {
@@ -123,6 +155,195 @@ public class IncomingDocumentService {
         }
 
         return processedCount;
+    }
+
+    /**
+     * Processes a standalone EML file located in the tenant inbox.
+     * Extracts email body to PDF, extracts all attachments, and keeps
+     * body and attachments together in a dedicated subfolder inside queue/.
+     */
+    private int processStandaloneEmlFile(JdbcTemplate jdbc, int tenantId, Path emlFile, Path queueDir) {
+        log.info("Tenant #{}: Handling incoming EML file '{}'", tenantId, emlFile.getFileName());
+        try {
+            EmlParserService.ParsedEmail email = emlParserService.parse(emlFile);
+
+            String baseName = getBaseName(emlFile.getFileName().toString());
+            String cleanSubject = sanitizeGroupName(email.subject());
+            if (cleanSubject.isBlank() || cleanSubject.equalsIgnoreCase("No_Subject")) {
+                cleanSubject = sanitizeGroupName(baseName);
+            }
+
+            // Subfolder name to keep email body PDF and attachments grouped together
+            String folderName = "Email_" + cleanSubject;
+            Path targetGroupDir = queueDir.resolve(folderName);
+            if (Files.exists(targetGroupDir)) {
+                targetGroupDir = queueDir.resolve(folderName + "_" + System.currentTimeMillis());
+                folderName = targetGroupDir.getFileName().toString();
+            }
+            Files.createDirectories(targetGroupDir);
+
+            String groupId = "GRP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            int count = processEmlContentIntoGroup(jdbc, tenantId, emlFile, email, targetGroupDir, groupId, folderName);
+
+            // Clean up source .eml from inbox
+            try {
+                Files.delete(emlFile);
+                log.info("Cleaned up source EML file: {}", emlFile);
+            } catch (Exception ex) {
+                log.warn("Could not delete source EML {}: {}", emlFile, ex.getMessage());
+            }
+
+            // Clean up any companion .txt file created by older mail fetchers with the same base name
+            try {
+                Path companionTxt = emlFile.getParent().resolve(baseName + ".txt");
+                if (Files.exists(companionTxt)) {
+                    Files.delete(companionTxt);
+                    log.info("Cleaned up companion .txt file: {}", companionTxt);
+                }
+            } catch (Exception ignored) {
+            }
+
+            return count;
+        } catch (Exception e) {
+            log.error("Failed to process standalone EML file {}: {}", emlFile, e.getMessage(), e);
+            return 0;
+        }
+    }
+
+    /**
+     * Processes an EML file located within a grouped subfolder in the tenant inbox.
+     */
+    private int processEmlFileIntoGroup(
+            JdbcTemplate jdbc,
+            int tenantId,
+            Path emlFile,
+            Path targetGroupDir,
+            String groupId,
+            String groupName
+    ) {
+        log.info("Tenant #{}: Handling grouped EML file '{}' in group '{}'", tenantId, emlFile.getFileName(), groupName);
+        try {
+            EmlParserService.ParsedEmail email = emlParserService.parse(emlFile);
+            int count = processEmlContentIntoGroup(jdbc, tenantId, emlFile, email, targetGroupDir, groupId, groupName);
+
+            try {
+                Files.delete(emlFile);
+                log.info("Cleaned up source grouped EML file: {}", emlFile);
+            } catch (Exception ex) {
+                log.warn("Could not delete source grouped EML {}: {}", emlFile, ex.getMessage());
+            }
+
+            return count;
+        } catch (Exception e) {
+            log.error("Failed to process grouped EML file {}: {}", emlFile, e.getMessage(), e);
+            return 0;
+        }
+    }
+
+    /**
+     * Converts email body to PDF and extracts attachments into the target group directory,
+     * registering all generated documents into dbo.DOC_INCOMING with matching group info.
+     */
+    private int processEmlContentIntoGroup(
+            JdbcTemplate jdbc,
+            int tenantId,
+            Path emlFile,
+            EmlParserService.ParsedEmail email,
+            Path targetGroupDir,
+            String groupId,
+            String groupName
+    ) {
+        int count = 0;
+        List<String> attachmentFileNames = email.attachments().stream()
+                .map(EmlParserService.EmailAttachment::fileName)
+                .toList();
+
+        // 1. Convert email body to PDF
+        String subject = (email.subject() != null && !email.subject().isBlank()) ? email.subject() : "No Subject";
+        String cleanSubject = sanitizeGroupName(subject);
+        String bodyFileName = "Email_" + cleanSubject + ".pdf";
+        if (bodyFileName.length() > 80) {
+            bodyFileName = bodyFileName.substring(0, 76) + ".pdf";
+        }
+        Path pdfTarget = targetGroupDir.resolve(bodyFileName);
+        if (Files.exists(pdfTarget)) {
+            pdfTarget = targetGroupDir.resolve("Email_" + cleanSubject + "_" + System.currentTimeMillis() + ".pdf");
+        }
+
+        byte[] pdfBytes = null;
+        try {
+            DocgenClient.GeneratedDocumentResult result = docgenClient.generateEmailPdf(
+                    tenantId,
+                    subject,
+                    email.from(),
+                    email.to(),
+                    email.dateStr(),
+                    email.bodyText(),
+                    email.bodyHtml(),
+                    attachmentFileNames
+            );
+            pdfBytes = result.content();
+            log.info("DocGen generated email body PDF: {} bytes", pdfBytes.length);
+        } catch (Exception ex) {
+            log.warn("DocGen service call failed for email PDF, using fallback PDF engine: {}", ex.getMessage());
+            pdfBytes = generateFallbackEmailPdf(email, attachmentFileNames);
+        }
+
+        try {
+            Files.write(pdfTarget, pdfBytes);
+            insertDocIncoming(
+                    jdbc,
+                    tenantId,
+                    "Email - " + cleanDocTitle(subject),
+                    pdfTarget.getFileName().toString(),
+                    pdfTarget.toAbsolutePath().toString(),
+                    pdfBytes.length,
+                    "application/pdf",
+                    groupId,
+                    groupName
+            );
+            count++;
+            log.info("Tenant #{}: Saved and queued email body PDF '{}' -> {}", tenantId, pdfTarget.getFileName(), pdfTarget);
+        } catch (Exception e) {
+            log.error("Failed to write/record email body PDF: {}", e.getMessage(), e);
+        }
+
+        // 2. Extract and queue all attachments
+        for (EmlParserService.EmailAttachment att : email.attachments()) {
+            try {
+                String safeAttName = EmlParserService.sanitizeFileName(att.fileName());
+                Path attTarget = targetGroupDir.resolve(safeAttName);
+                if (Files.exists(attTarget)) {
+                    String base = getBaseName(safeAttName);
+                    String ext = getExtension(safeAttName);
+                    attTarget = targetGroupDir.resolve(base + "_" + System.currentTimeMillis() + ext);
+                }
+
+                Files.write(attTarget, att.content());
+                long size = att.content().length;
+                String mime = (att.contentType() != null && !att.contentType().isBlank() && !att.contentType().contains("octet-stream"))
+                        ? att.contentType()
+                        : probeMimeType(attTarget);
+
+                insertDocIncoming(
+                        jdbc,
+                        tenantId,
+                        cleanDocTitle(attTarget.getFileName().toString()),
+                        attTarget.getFileName().toString(),
+                        attTarget.toAbsolutePath().toString(),
+                        size,
+                        mime,
+                        groupId,
+                        groupName
+                );
+                count++;
+                log.info("Tenant #{}: Extracted attachment '{}' ({} bytes) -> {}", tenantId, attTarget.getFileName(), size, attTarget);
+            } catch (Exception e) {
+                log.error("Failed to extract and record attachment {}: {}", att.fileName(), e.getMessage(), e);
+            }
+        }
+
+        return count;
     }
 
     private int processAndMoveFile(
@@ -138,13 +359,8 @@ public class IncomingDocumentService {
             // Avoid conflict if file with same name already exists in target
             Path targetFile = targetDir.resolve(originalFileName);
             if (Files.exists(targetFile)) {
-                String namePart = originalFileName;
-                String extPart = "";
-                int dotIdx = originalFileName.lastIndexOf('.');
-                if (dotIdx > 0) {
-                    namePart = originalFileName.substring(0, dotIdx);
-                    extPart = originalFileName.substring(dotIdx);
-                }
+                String namePart = getBaseName(originalFileName);
+                String extPart = getExtension(originalFileName);
                 String uniqueName = namePart + "_" + System.currentTimeMillis() + extPart;
                 targetFile = targetDir.resolve(uniqueName);
             }
@@ -155,27 +371,17 @@ public class IncomingDocumentService {
             String mimeType = probeMimeType(targetFile);
             String docName = cleanDocTitle(originalFileName);
 
-            // Insert into dbo.DOC_INCOMING
-            String sql = """
-                    INSERT INTO dbo.DOC_INCOMING (
-                        TENANT_ID, DOCUMENT_NAME, FILE_NAME, FILE_PATH, FILE_SIZE_BYTES,
-                        MIME_TYPE, GROUP_ID, GROUP_NAME, STATUS, RECEIVED_DT, CREATED_DT, UPDATED_DT
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED', GETDATE(), GETDATE(), GETDATE())
-                    """;
-
-            Path finalTarget = targetFile;
-            jdbc.update(con -> {
-                PreparedStatement ps = con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-                ps.setInt(1, tenantId);
-                ps.setString(2, docName);
-                ps.setString(3, finalTarget.getFileName().toString());
-                ps.setString(4, finalTarget.toAbsolutePath().toString());
-                ps.setLong(5, fileSizeBytes);
-                ps.setString(6, mimeType);
-                ps.setString(7, groupId);
-                ps.setString(8, groupName);
-                return ps;
-            });
+            insertDocIncoming(
+                    jdbc,
+                    tenantId,
+                    docName,
+                    targetFile.getFileName().toString(),
+                    targetFile.toAbsolutePath().toString(),
+                    fileSizeBytes,
+                    mimeType,
+                    groupId,
+                    groupName
+            );
 
             log.info("Tenant #{}: Moved incoming file '{}' to queue: {}", tenantId, originalFileName, targetFile);
             return 1;
@@ -183,6 +389,38 @@ public class IncomingDocumentService {
             log.error("Failed to process and move file {}: {}", sourceFile, e.getMessage(), e);
             return 0;
         }
+    }
+
+    private void insertDocIncoming(
+            JdbcTemplate jdbc,
+            int tenantId,
+            String docName,
+            String fileName,
+            String filePath,
+            long fileSizeBytes,
+            String mimeType,
+            String groupId,
+            String groupName
+    ) {
+        String sql = """
+                INSERT INTO dbo.DOC_INCOMING (
+                    TENANT_ID, DOCUMENT_NAME, FILE_NAME, FILE_PATH, FILE_SIZE_BYTES,
+                    MIME_TYPE, GROUP_ID, GROUP_NAME, STATUS, RECEIVED_DT, CREATED_DT, UPDATED_DT
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED', GETDATE(), GETDATE(), GETDATE())
+                """;
+
+        jdbc.update(con -> {
+            PreparedStatement ps = con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            ps.setInt(1, tenantId);
+            ps.setString(2, docName);
+            ps.setString(3, fileName);
+            ps.setString(4, filePath);
+            ps.setLong(5, fileSizeBytes);
+            ps.setString(6, mimeType);
+            ps.setString(7, groupId);
+            ps.setString(8, groupName);
+            return ps;
+        });
     }
 
     public List<IncomingDocumentDto> getIncomingDocuments(int tenantId, String status, String groupName) {
@@ -329,6 +567,18 @@ public class IncomingDocumentService {
     public Map<String, Object> createSubmissionAndAttach(int tenantId, int incomingId, CreateSubmissionFromDocRequest req) {
         JdbcTemplate jdbc = documentService.getTenantJdbcTemplate(tenantId);
 
+        // Ensure columns for agency association exist
+        try {
+            jdbc.execute("""
+                    IF COL_LENGTH('dbo.UW_SUBMSN', 'AGENCY_ID') IS NULL
+                        ALTER TABLE dbo.UW_SUBMSN ADD AGENCY_ID INT NULL;
+                    IF COL_LENGTH('dbo.UW_SUBMSN', 'AGENCY_INFO') IS NULL
+                        ALTER TABLE dbo.UW_SUBMSN ADD AGENCY_INFO VARCHAR(255) NULL;
+                    """);
+        } catch (Exception ex) {
+            log.warn("Notice checking UW_SUBMSN agency columns: {}", ex.getMessage());
+        }
+
         // 1. Resolve or Create Insured Organization (PT_PARTY)
         int insuredPid = (req.insuredPid() != null && req.insuredPid() > 0) ? req.insuredPid() : 0;
         String orgName = (req.orgName() != null && !req.orgName().isBlank())
@@ -349,7 +599,18 @@ public class IncomingDocumentService {
         }
         final int finalInsuredPid = resolvedPid;
 
-        // 2. Generate Submission Number and Create Submission (UW_SUBMSN)
+        // 2. Resolve Agency Association
+        Integer agencyId = (req.agencyId() != null && req.agencyId() > 0) ? req.agencyId() : null;
+        String agencyInfo = (req.agencyInfo() != null && !req.agencyInfo().isBlank()) ? req.agencyInfo().trim() : null;
+        if (agencyId != null && (agencyInfo == null || agencyInfo.isBlank())) {
+            try {
+                agencyInfo = jdbc.queryForObject("SELECT ORG_NM FROM dbo.PT_PARTY WHERE PARTY_ID = ?", String.class, agencyId);
+            } catch (Exception ignored) {}
+        }
+        final Integer finalAgencyId = agencyId;
+        final String finalAgencyInfo = agencyInfo;
+
+        // 3. Generate Submission Number and Create Submission (UW_SUBMSN)
         String submsnNbr = (req.submissionNbr() != null && !req.submissionNbr().isBlank())
                 ? req.submissionNbr().trim()
                 : "SUB-" + (10000 + (int) (Math.random() * 90000));
@@ -366,8 +627,8 @@ public class IncomingDocumentService {
                 INSERT INTO dbo.UW_SUBMSN (
                     SUBMSN_NBR, INSURED_PID, POLICY_ID, SUBMSN_DT, STATUS,
                     UNDERWRITER, EFFECTIVE_DT, EXPIRATION_DT, RETROACTIVE_DT,
-                    LIMIT_AMT, RETENTION_AMT
-                ) VALUES (?, ?, NULL, ?, 'Received', ?, ?, ?, ?, ?, ?)
+                    LIMIT_AMT, RETENTION_AMT, AGENCY_ID, AGENCY_INFO
+                ) VALUES (?, ?, NULL, ?, 'Received', ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         String retroDate = (req.retroactiveDate() != null) ? req.retroactiveDate() : effectiveDate;
@@ -383,13 +644,20 @@ public class IncomingDocumentService {
             ps.setString(7, retroDate);
             ps.setString(8, limitAmt);
             ps.setString(9, retentionAmt);
+            if (finalAgencyId != null) {
+                ps.setInt(10, finalAgencyId);
+            } else {
+                ps.setNull(10, java.sql.Types.INTEGER);
+            }
+            ps.setString(11, finalAgencyInfo);
             return ps;
         }, subKh);
 
         int newSubmsnId = (subKh.getKey() != null) ? subKh.getKey().intValue() : 0;
-        log.info("Tenant #{}: Created new UW_SUBMSN #{} ({}) for Party #{}", tenantId, newSubmsnId, submsnNbr, finalInsuredPid);
+        log.info("Tenant #{}: Created new UW_SUBMSN #{} ({}) for Party #{} (Agency: {})",
+                tenantId, newSubmsnId, submsnNbr, finalInsuredPid, finalAgencyInfo);
 
-        // 3. Attach Incoming Document to New Submission
+        // 4. Attach Incoming Document to New Submission
         AttachDocumentRequest attachReq = new AttachDocumentRequest(
                 "SUBMISSION",
                 (long) newSubmsnId,
@@ -409,6 +677,8 @@ public class IncomingDocumentService {
         result.put("status", "Received");
         result.put("underwriter", underwriter);
         result.put("effectiveDate", effectiveDate);
+        result.put("agencyId", finalAgencyId);
+        result.put("agencyInfo", finalAgencyInfo);
         result.put("attachedDocument", attachedDoc);
 
         return result;
@@ -448,6 +718,31 @@ public class IncomingDocumentService {
         );
     }
 
+    private boolean isEmlFile(Path path) {
+        String name = path.getFileName().toString().toLowerCase();
+        return name.endsWith(".eml") || name.endsWith(".msg");
+    }
+
+    private String getBaseName(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return (dot > 0) ? fileName.substring(0, dot) : fileName;
+    }
+
+    private String getExtension(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return (dot >= 0) ? fileName.substring(dot) : "";
+    }
+
+    private String sanitizeGroupName(String name) {
+        if (name == null || name.isBlank()) return "Email_Intake";
+        String clean = name.replaceAll("[^a-zA-Z0-9_-]", "_").replaceAll("_+", "_").trim();
+        clean = clean.replaceAll("^_|_$", "");
+        if (clean.length() > 60) {
+            clean = clean.substring(0, 60);
+        }
+        return clean.isEmpty() ? "Email_Intake" : clean;
+    }
+
     private String cleanDocTitle(String fileName) {
         String title = fileName;
         int dot = title.lastIndexOf('.');
@@ -455,6 +750,80 @@ public class IncomingDocumentService {
             title = title.substring(0, dot);
         }
         return title.replace('_', ' ').replace('-', ' ').trim();
+    }
+
+    private byte[] generateFallbackEmailPdf(EmlParserService.ParsedEmail email, List<String> attachmentNames) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("HELIOS INCOMING EMAIL INTAKE RECORD\n");
+            sb.append("========================================================================\n");
+            sb.append("Subject: ").append(email.subject()).append("\n");
+            sb.append("From: ").append(email.from()).append("\n");
+            sb.append("To: ").append(email.to()).append("\n");
+            sb.append("Date Received: ").append(email.dateStr()).append("\n");
+            if (attachmentNames != null && !attachmentNames.isEmpty()) {
+                sb.append("Extracted Attachments (").append(attachmentNames.size()).append("):\n");
+                for (int i = 0; i < attachmentNames.size(); i++) {
+                    sb.append("  ").append(i + 1).append(". ").append(attachmentNames.get(i)).append("\n");
+                }
+            } else {
+                sb.append("Extracted Attachments: None\n");
+            }
+            sb.append("========================================================================\n\n");
+            sb.append("EMAIL CONTENT:\n\n");
+            if (email.bodyText() != null && !email.bodyText().isBlank()) {
+                sb.append(email.bodyText()).append("\n");
+            } else if (email.bodyHtml() != null && !email.bodyHtml().isBlank()) {
+                sb.append(email.bodyHtml().replaceAll("<[^>]*>", " ").replaceAll("\\s+", " ")).append("\n");
+            } else {
+                sb.append("(Empty message body)\n");
+            }
+            return createSimplePdf(sb.toString());
+        } catch (Exception e) {
+            log.error("Failed to generate fallback email PDF: {}", e.getMessage(), e);
+            return createSimplePdf("Email Subject: " + email.subject());
+        }
+    }
+
+    private byte[] createSimplePdf(String text) {
+        String escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)");
+        String[] lines = escaped.split("\n");
+        StringBuilder stream = new StringBuilder();
+        stream.append("BT\n/F1 9 Tf\n50 740 Td\n13 TL\n");
+        for (String line : lines) {
+            String l = line.length() > 95 ? line.substring(0, 92) + "..." : line;
+            stream.append("(").append(l).append(") '\n");
+        }
+        stream.append("ET\n");
+
+        byte[] streamBytes = stream.toString().getBytes(StandardCharsets.ISO_8859_1);
+        int streamLen = streamBytes.length;
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            out.write("%PDF-1.4\n".getBytes(StandardCharsets.US_ASCII));
+            List<Integer> offsets = new ArrayList<>();
+            offsets.add(out.size());
+            out.write("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".getBytes(StandardCharsets.US_ASCII));
+            offsets.add(out.size());
+            out.write("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".getBytes(StandardCharsets.US_ASCII));
+            offsets.add(out.size());
+            out.write("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n".getBytes(StandardCharsets.US_ASCII));
+            offsets.add(out.size());
+            out.write("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".getBytes(StandardCharsets.US_ASCII));
+            offsets.add(out.size());
+            out.write(("5 0 obj\n<< /Length " + streamLen + " >>\nstream\n").getBytes(StandardCharsets.US_ASCII));
+            out.write(streamBytes);
+            out.write("\nendstream\nendobj\n".getBytes(StandardCharsets.US_ASCII));
+            int xrefOffset = out.size();
+            out.write("xref\n0 6\n0000000000 65535 f \n".getBytes(StandardCharsets.US_ASCII));
+            for (int offset : offsets) {
+                out.write(String.format("%010d 00000 n \n", offset).getBytes(StandardCharsets.US_ASCII));
+            }
+            out.write(("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefOffset + "\n%%EOF\n").getBytes(StandardCharsets.US_ASCII));
+        } catch (Exception ignored) {
+        }
+        return out.toByteArray();
     }
 
     private String probeMimeType(Path path) {

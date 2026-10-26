@@ -145,8 +145,13 @@ public class HeliosController {
             String underwriter,
             String limit,
             String retention,
-            String premium
+            String premium,
+            Integer agencyId,
+            String agencyInfo
     ) {
+        public CreateSubmissionRequest(int partyId, String underwriter, String limit, String retention, String premium) {
+            this(partyId, underwriter, limit, retention, premium, null, null);
+        }
     }
 
     @PostMapping("/submissions")
@@ -156,7 +161,9 @@ public class HeliosController {
                 request.underwriter(),
                 request.limit(),
                 request.retention(),
-                request.premium()
+                request.premium(),
+                request.agencyId(),
+                request.agencyInfo()
         );
         return ResponseEntity.ok(created);
     }
@@ -213,9 +220,14 @@ public class HeliosController {
     @GetMapping("/parties")
     public List<PartyDto> searchParties(
             @RequestParam(name = "q", required = false) String query,
+            @RequestParam(name = "address", required = false) String address,
+            @RequestParam(name = "street", required = false) String street,
+            @RequestParam(name = "city", required = false) String city,
+            @RequestParam(name = "state", required = false) String state,
+            @RequestParam(name = "zip", required = false) String zip,
             @RequestParam(name = "partyType", required = false) String partyType,
             @RequestParam(name = "partySubType", required = false) String partySubType) {
-        return heliosService.searchParties(query, partyType, partySubType);
+        return heliosService.searchParties(query, address, street, city, state, zip, partyType, partySubType);
     }
 
     @PostMapping("/parties")

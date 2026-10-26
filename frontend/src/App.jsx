@@ -42,7 +42,11 @@ import {
   Alert,
   CircularProgress,
   InputAdornment,
-  Menu as MuiMenu
+  Menu as MuiMenu,
+  Checkbox,
+  Radio,
+  RadioGroup,
+  FormControlLabel
 } from '@mui/material';
 import {
   LayoutGrid,
@@ -90,7 +94,12 @@ import {
   History,
   MapPin,
   Building2,
-  UserCheck
+  UserCheck,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  CornerDownRight,
+  Mail
 } from 'lucide-react';
 
 // --- Dynamic Per-Tenant Theme Builder ---
@@ -1453,6 +1462,12 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                 <Typography variant="caption" color="textSecondary">Retention</Typography>
                 <Typography variant="body2" fontWeight={600}>{selectedSub.fileLevelInfo?.retention}</Typography>
               </Grid>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <Typography variant="caption" color="textSecondary">Agency / Brokerage</Typography>
+                <Typography variant="body2" fontWeight={600} sx={{ color: selectedSub.agencyInfo ? '#7e22ce' : 'inherit' }}>
+                  {selectedSub.agencyInfo || 'Direct (No Agency)'}
+                </Typography>
+              </Grid>
             </Grid>
           </CardContent>
         </Card>
@@ -1662,6 +1677,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                 <TableRow>
                   <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>SUBMISSION NUMBER</TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>INSURED NAME</TableCell>
+                  <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>AGENCY / BROKER</TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>POLICY NUMBER</TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>PRODUCT TYPE</TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>UNDERWRITER</TableCell>
@@ -1679,6 +1695,24 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                   >
                     <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>{sub.submsnNbr}</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>{sub.orgName}</TableCell>
+                    <TableCell>
+                      {sub.agencyInfo ? (
+                        <Chip
+                          label={sub.agencyInfo}
+                          size="small"
+                          sx={{
+                            bgcolor: '#faf5ff',
+                            color: '#7e22ce',
+                            border: '1px solid #e9d5ff',
+                            fontWeight: 600,
+                            fontSize: '0.72rem',
+                            maxWidth: 180
+                          }}
+                        />
+                      ) : (
+                        <Typography variant="caption" color="textSecondary">Direct</Typography>
+                      )}
+                    </TableCell>
                     <TableCell>{sub.policyNbr || '—'}</TableCell>
                     <TableCell>{sub.productType}</TableCell>
                     <TableCell>{sub.fileLevelInfo?.underwriter}</TableCell>
@@ -4768,7 +4802,1200 @@ const DocumentsManager = ({
 };
 
 // ============================================================================
-// 4.6. INCOMING DOCUMENTS INBOX & PROCESSING WORKFLOW
+// 4.5B. CREATE ORGANIZATION & SUBMISSION PAGE (INTAKE WORKFLOW)
+// Replaces the modal popup from Document Inbox with a dedicated full page.
+// Features:
+// 1. Search organizations by name and/or address
+// 2. Selectable results table with button "Create Submission for Selected Organization"
+//    (disabled/inactive until a row is selected)
+// 3. Button to start creation of a new organization and submission
+// 4. Association of an Agency with the submission (direct or brokerage directory)
+// 5. Automatic attachment of all selected intake documents to the submission
+// ============================================================================
+const CreateOrgSubmissionView = ({ apiFetch, activeTenantId, activeRole, selectedDocs = [], onNavigate }) => {
+  const [mode, setMode] = useState('search'); // 'search' | 'create-new'
+  const [searchName, setSearchName] = useState('');
+  const [searchStreet, setSearchStreet] = useState('');
+  const [searchCity, setSearchCity] = useState('');
+  const [searchState, setSearchState] = useState('');
+  const [searchZip, setSearchZip] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [selectedOrgId, setSelectedOrgId] = useState(null);
+  const [showConfigSection, setShowConfigSection] = useState(false);
+  const didInitRef = useRef(false);
+
+  // Agency Association
+  const [agenciesList, setAgenciesList] = useState([]);
+  const [loadingAgencies, setLoadingAgencies] = useState(false);
+  const [agencyOption, setAgencyOption] = useState(''); // '' = Direct, 'CUSTOM', or agency partyId string
+  const [customAgencyName, setCustomAgencyName] = useState('');
+
+  // New Organization fields (when mode === 'create-new')
+  const [newOrgForm, setNewOrgForm] = useState({
+    name: '',
+    line1: '',
+    line2: '',
+    city: '',
+    stateCode: 'IL',
+    postalCode: ''
+  });
+  const [zipLookupLoading, setZipLookupLoading] = useState(false);
+
+  // Guess initial organization name from first document if available
+  const initialOrgGuess = useMemo(() => {
+    if (!selectedDocs || selectedDocs.length === 0) return '';
+    const d = selectedDocs[0];
+    let guess = d.groupName ? d.groupName.replace(/_/g, ' ') : d.documentName?.replace(/_/g, ' ') || '';
+    guess = guess.replace(/batch|acord|app|schedule/gi, '').trim();
+    return guess;
+  }, [selectedDocs]);
+
+  const [submissionForm, setSubmissionForm] = useState({
+    underwriter: activeRole?.roleName || 'Michael Chang',
+    productType: 'Technology Errors & Omissions',
+    effectiveDate: new Date().toISOString().substring(0, 10),
+    expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
+    retroactiveDate: new Date().toISOString().substring(0, 10),
+    limitAmount: '$1,000,000',
+    retentionAmount: '$10,000',
+    docType: 'APPLICATION',
+    docTitle: ''
+  });
+
+  const [submitting, setSubmitting] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(null);
+  const [flash, setFlash] = useState(null);
+
+  // Load registered agencies for association
+  useEffect(() => {
+    let isMounted = true;
+    const loadAgencies = async () => {
+      setLoadingAgencies(true);
+      try {
+        const data = await apiFetch('/api/parties?partyType=ORGANIZATION&partySubType=AGENCY');
+        if (isMounted && Array.isArray(data)) {
+          setAgenciesList(data);
+        }
+      } catch (err) {
+        console.error('Failed to load agencies for submission association:', err);
+      } finally {
+        if (isMounted) setLoadingAgencies(false);
+      }
+    };
+    loadAgencies();
+    return () => { isMounted = false; };
+  }, [apiFetch, activeTenantId]);
+
+  // Set default search name or new org name from doc guess only once on initial load
+  useEffect(() => {
+    if (!didInitRef.current && initialOrgGuess) {
+      didInitRef.current = true;
+      setSearchName(initialOrgGuess);
+      setNewOrgForm((prev) => ({ ...prev, name: prev.name || initialOrgGuess }));
+      setSubmissionForm((prev) => ({
+        ...prev,
+        docTitle: prev.docTitle || `${initialOrgGuess} — Intake Application`
+      }));
+    }
+  }, [initialOrgGuess]);
+
+  const handleSearch = async (e) => {
+    if (e) e.preventDefault();
+    if (!searchName.trim() && !searchStreet.trim() && !searchCity.trim() && !searchState.trim() && !searchZip.trim()) {
+      setFlash({ type: 'warning', text: 'Please enter an organization name and/or address elements to search.' });
+      return;
+    }
+    setSearching(true);
+    setSelectedOrgId(null);
+    setShowConfigSection(false);
+    try {
+      let url = `/api/parties?partyType=ORGANIZATION`;
+      if (searchName.trim()) {
+        url += `&q=${encodeURIComponent(searchName.trim())}&name=${encodeURIComponent(searchName.trim())}`;
+      }
+      if (searchStreet.trim()) {
+        url += `&street=${encodeURIComponent(searchStreet.trim())}`;
+      }
+      if (searchCity.trim()) {
+        url += `&city=${encodeURIComponent(searchCity.trim())}`;
+      }
+      if (searchState.trim()) {
+        url += `&state=${encodeURIComponent(searchState.trim())}`;
+      }
+      if (searchZip.trim()) {
+        url += `&zip=${encodeURIComponent(searchZip.trim())}`;
+      }
+      const data = await apiFetch(url);
+      const list = Array.isArray(data) ? data : [];
+      setSearchResults(list);
+      setHasSearched(true);
+      if (list.length === 0) {
+        const criteriaParts = [
+          searchName && `Name: "${searchName}"`,
+          searchStreet && `Street: "${searchStreet}"`,
+          searchCity && `City: "${searchCity}"`,
+          searchState && `State: "${searchState}"`,
+          searchZip && `ZIP: "${searchZip}"`
+        ].filter(Boolean);
+        setFlash({
+          type: 'info',
+          text: `No matching organizations found for criteria (${criteriaParts.join(', ')}). You can click "Start Creation of Organization & Submission" below to create a new organization.`
+        });
+      } else {
+        setFlash(null);
+      }
+    } catch (err) {
+      setFlash({ type: 'error', text: `Search failed: ${err.message}` });
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchName('');
+    setSearchStreet('');
+    setSearchCity('');
+    setSearchState('');
+    setSearchZip('');
+    setSearchResults([]);
+    setHasSearched(false);
+    setSelectedOrgId(null);
+    setShowConfigSection(false);
+    setFlash(null);
+  };
+
+  const handleZipChange = async (val) => {
+    setNewOrgForm((prev) => ({ ...prev, postalCode: val }));
+    const clean = String(val || '').trim().replace(/[^\d]/g, '');
+    if (clean.length === 5) {
+      setZipLookupLoading(true);
+      try {
+        const data = await apiFetch(`/api/zip-codes/${clean}`);
+        if (data && data.city && data.stateCode) {
+          setNewOrgForm((prev) => ({
+            ...prev,
+            city: data.city,
+            stateCode: data.stateCode
+          }));
+        }
+      } catch (ignored) {
+      } finally {
+        setZipLookupLoading(false);
+      }
+    }
+  };
+
+  const selectedOrg = useMemo(() => {
+    return searchResults.find((o) => o.id === selectedOrgId) || null;
+  }, [searchResults, selectedOrgId]);
+
+  // When selectedOrg changes, update doc title default
+  useEffect(() => {
+    if (selectedOrg) {
+      setSubmissionForm((prev) => ({
+        ...prev,
+        docTitle: `${selectedOrg.name} — Intake Submission Documents`
+      }));
+    }
+  }, [selectedOrg]);
+
+  const handleConfirmCreateSubmission = async (e) => {
+    if (e) e.preventDefault();
+    setSubmitting(true);
+    try {
+      let targetOrgId = selectedOrgId;
+      let targetOrgName = selectedOrg?.name;
+
+      // 1. Resolve Agency
+      let resolvedAgencyId = agencyOption && agencyOption !== 'CUSTOM' ? Number(agencyOption) : null;
+      let resolvedAgencyInfo = null;
+
+      if (agencyOption === 'CUSTOM') {
+        resolvedAgencyInfo = customAgencyName.trim();
+        if (!resolvedAgencyInfo) {
+          throw new Error('Please enter the custom agency name or select Direct (No Agency).');
+        }
+      } else if (resolvedAgencyId) {
+        const matched = agenciesList.find((a) => a.id === resolvedAgencyId);
+        resolvedAgencyInfo = matched ? matched.name : null;
+      }
+
+      // 2. If creating brand new org, save party & address first
+      if (mode === 'create-new') {
+        if (!newOrgForm.name.trim()) {
+          throw new Error('Insured Organization Name is required.');
+        }
+        targetOrgName = newOrgForm.name.trim();
+
+        const partyPayload = {
+          name: targetOrgName,
+          orgName: targetOrgName,
+          partyType: 'ORGANIZATION',
+          partySubType: 'INSURED',
+          address: newOrgForm.line1.trim() ? {
+            line1: newOrgForm.line1.trim(),
+            line2: newOrgForm.line2.trim() || null,
+            city: newOrgForm.city.trim() || '',
+            stateCode: newOrgForm.stateCode || 'IL',
+            postalCode: newOrgForm.postalCode.trim() || '',
+            countryCode: 'US',
+            changeReason: 'Initial Document Intake Setup'
+          } : null
+        };
+
+        const createdParty = await apiFetch('/api/parties', {
+          method: 'POST',
+          body: JSON.stringify(partyPayload)
+        });
+        targetOrgId = createdParty.id;
+      }
+
+      if (!targetOrgId && mode !== 'create-new') {
+        throw new Error('Please select an organization from the table first.');
+      }
+
+      // 3. Create submission and attach the first selected document
+      const firstDoc = selectedDocs && selectedDocs.length > 0 ? selectedDocs[0] : null;
+      let subResult;
+
+      if (firstDoc) {
+        subResult = await apiFetch(
+          `/document-api/documents/incoming/${firstDoc.incomingId}/create-submission?tenantId=${activeTenantId}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              orgName: targetOrgName,
+              insuredPid: targetOrgId,
+              underwriter: submissionForm.underwriter,
+              productType: submissionForm.productType,
+              effectiveDate: submissionForm.effectiveDate,
+              expirationDate: submissionForm.expirationDate,
+              retroactiveDate: submissionForm.retroactiveDate,
+              limitAmount: submissionForm.limitAmount,
+              retentionAmount: submissionForm.retentionAmount,
+              docType: submissionForm.docType,
+              docTitle: submissionForm.docTitle || `${targetOrgName} — Intake Application`,
+              attachedBy: submissionForm.underwriter,
+              agencyId: resolvedAgencyId,
+              agencyInfo: resolvedAgencyInfo
+            })
+          }
+        );
+      } else {
+        subResult = await apiFetch('/api/submissions', {
+          method: 'POST',
+          body: JSON.stringify({
+            partyId: targetOrgId,
+            underwriter: submissionForm.underwriter,
+            limit: submissionForm.limitAmount,
+            retention: submissionForm.retentionAmount,
+            premium: '$25,000',
+            agencyId: resolvedAgencyId,
+            agencyInfo: resolvedAgencyInfo
+          })
+        });
+      }
+
+      const newSubmsnId = subResult.submissionId || subResult.submsnId;
+      const newSubmsnNbr = subResult.submissionNbr || subResult.submsnNbr;
+
+      // 4. Attach all additional selected documents (if more than 1)
+      if (selectedDocs && selectedDocs.length > 1) {
+        for (let i = 1; i < selectedDocs.length; i++) {
+          const doc = selectedDocs[i];
+          try {
+            await apiFetch(
+              `/document-api/documents/incoming/${doc.incomingId}/attach?tenantId=${activeTenantId}`,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  entityType: 'SUBMISSION',
+                  entityId: Number(newSubmsnId),
+                  entityNbr: newSubmsnNbr,
+                  docType: doc.documentName?.toLowerCase().includes('loss') ? 'LOSS_RUNS' : submissionForm.docType,
+                  docTitle: doc.documentName || doc.fileName,
+                  attachedBy: submissionForm.underwriter
+                })
+              }
+            );
+          } catch (attErr) {
+            console.error(`Failed to attach additional document #${doc.incomingId}:`, attErr);
+          }
+        }
+      }
+
+      setSubmitSuccess({
+        submissionId: newSubmsnId,
+        submissionNbr: newSubmsnNbr,
+        orgName: targetOrgName,
+        partyId: targetOrgId,
+        agencyInfo: resolvedAgencyInfo,
+        productType: submissionForm.productType,
+        underwriter: submissionForm.underwriter,
+        attachedDocs: selectedDocs
+      });
+
+      setFlash({
+        type: 'success',
+        text: `Submission ${newSubmsnNbr} successfully created for ${targetOrgName} with ${selectedDocs.length} document(s) attached!`
+      });
+    } catch (err) {
+      setFlash({ type: 'error', text: err.message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  };
+
+  const formatAddress = (addr) => {
+    if (!addr) return '—';
+    const parts = [
+      addr.line1,
+      addr.line2,
+      addr.city,
+      addr.stateCode ? `${addr.stateCode} ${addr.postalCode || ''}`.trim() : addr.postalCode
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : '—';
+  };
+
+  return (
+    <Box>
+      {/* Top Breadcrumb & Return to Inbox */}
+      <Box sx={{ mb: 2.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1.5 }}>
+        <Button
+          variant="text"
+          startIcon={<ArrowLeft size={16} />}
+          onClick={() => onNavigate && onNavigate('inbox')}
+          sx={{ fontWeight: 600, color: '#475569' }}
+        >
+          Back to Document Inbox
+        </Button>
+        <Chip
+          label="Intake & Onboarding Page"
+          size="small"
+          sx={{ bgcolor: '#e0f2fe', color: '#0369a1', fontWeight: 700, fontSize: '0.72rem' }}
+        />
+      </Box>
+
+      {flash && (
+        <Alert severity={flash.type} onClose={() => setFlash(null)} sx={{ mb: 2.5 }}>
+          {flash.text}
+        </Alert>
+      )}
+
+      {/* Main Page Title Header */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 1.2 }}>
+          <Building2 size={24} style={{ color: '#0284c7' }} />
+          Create Organization &amp; Submission from Document
+        </Typography>
+        <Typography variant="body2" sx={{ color: '#64748b', mt: 0.5 }}>
+          Search for an existing organization or onboard a new insured, associate an agency, and attach selected intake documents to a newly initialized underwriting submission.
+        </Typography>
+      </Box>
+
+      {/* Selected Intake Documents Banner */}
+      <Card elevation={0} sx={{ mb: 3, border: '1px solid #e2e8f0', borderRadius: 2, bgcolor: '#f8fafc' }}>
+        <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 1 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1, color: '#1e293b' }}>
+              <Paperclip size={16} style={{ color: '#0284c7' }} />
+              Selected Documents to Attach ({selectedDocs.length})
+            </Typography>
+            <Typography variant="caption" sx={{ color: '#64748b' }}>
+              These files will automatically be linked to the created submission in <code>dbo.DOC_ATTACHMENT</code>.
+            </Typography>
+          </Box>
+
+          {selectedDocs.length === 0 ? (
+            <Alert severity="warning" sx={{ py: 0.5, fontSize: '0.82rem' }}>
+              No incoming documents were selected from the inbox. You can still create an organization &amp; submission, or{' '}
+              <Button size="small" variant="text" sx={{ p: 0, minWidth: 'auto', textDecoration: 'underline' }} onClick={() => onNavigate && onNavigate('inbox')}>
+                return to Document Inbox
+              </Button>{' '}
+              to select files.
+            </Alert>
+          ) : (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+              {selectedDocs.map((doc) => (
+                <Chip
+                  key={doc.incomingId}
+                  icon={<FileText size={14} />}
+                  label={`#${doc.incomingId}: ${doc.documentName} (${formatFileSize(doc.fileSizeBytes)}${doc.groupName ? ` • Batch: ${doc.groupName}` : ''})`}
+                  variant="outlined"
+                  sx={{
+                    bgcolor: '#ffffff',
+                    fontWeight: 600,
+                    fontSize: '0.75rem',
+                    borderColor: '#cbd5e1',
+                    py: 1.8
+                  }}
+                />
+              ))}
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* SUCCESS CONFIRMATION STATE */}
+      {submitSuccess ? (
+        <Card elevation={0} sx={{ border: '2px solid #86efac', borderRadius: 2, bgcolor: '#f0fdf4', p: 3, mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+            <Box sx={{ bgcolor: '#dcfce7', p: 1.5, borderRadius: '50%', color: '#16a34a' }}>
+              <CheckCircle2 size={32} />
+            </Box>
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: '#15803d' }}>
+                Submission Created &amp; Documents Attached Successfully!
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#166534', mt: 0.5 }}>
+                New Underwriting Submission <strong>{submitSuccess.submissionNbr}</strong> has been created in <code>dbo.UW_SUBMSN</code> and is ready for underwriting review and SERFF rating.
+              </Typography>
+
+              <Grid container spacing={2} sx={{ mt: 1.5, mb: 2.5 }}>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 1.5 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Insured Organization</Typography>
+                    <Typography variant="body1" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                      {submitSuccess.orgName} <Typography component="span" variant="caption" color="textSecondary">(Party #{submitSuccess.partyId})</Typography>
+                    </Typography>
+                  </Paper>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 1.5 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Submission Number</Typography>
+                    <Typography variant="body1" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                      {submitSuccess.submissionNbr} <Typography component="span" variant="caption" color="textSecondary">(ID #{submitSuccess.submissionId})</Typography>
+                    </Typography>
+                  </Paper>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <Paper elevation={0} sx={{ p: 1.5, bgcolor: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 1.5 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Associated Agency</Typography>
+                    <Typography variant="body1" sx={{ fontWeight: 700, color: submitSuccess.agencyInfo ? '#7e22ce' : '#475569' }}>
+                      {submitSuccess.agencyInfo || 'Direct (No Agency)'}
+                    </Typography>
+                  </Paper>
+                </Grid>
+              </Grid>
+
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#166534', textTransform: 'uppercase' }}>
+                  Attached Intake Documents ({submitSuccess.attachedDocs?.length || 0}):
+                </Typography>
+                <List dense sx={{ py: 0 }}>
+                  {(submitSuccess.attachedDocs || []).map((doc) => (
+                    <ListItem key={doc.incomingId} sx={{ px: 0, py: 0.3 }}>
+                      <ListItemIcon sx={{ minWidth: 26, color: '#15803d' }}>
+                        <Check size={16} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={`${doc.documentName} (${doc.fileName})`}
+                        primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<Files size={16} />}
+                  onClick={() => onNavigate && onNavigate('submissions')}
+                >
+                  View in Submissions Queue
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<Inbox size={16} />}
+                  onClick={() => onNavigate && onNavigate('inbox')}
+                >
+                  Return to Document Inbox
+                </Button>
+                <Button
+                  variant="text"
+                  onClick={() => {
+                    setSubmitSuccess(null);
+                    setSelectedOrgId(null);
+                    setShowConfigSection(false);
+                    setHasSearched(false);
+                  }}
+                >
+                  Create Another Submission
+                </Button>
+              </Box>
+            </Box>
+          </Box>
+        </Card>
+      ) : (
+        <>
+          {/* Action Mode Toggle Bar */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant={mode === 'search' ? 'contained' : 'outlined'}
+                color="primary"
+                size="small"
+                startIcon={<Search size={15} />}
+                onClick={() => {
+                  setMode('search');
+                  setShowConfigSection(false);
+                }}
+                sx={{ fontWeight: 600 }}
+              >
+                Search Existing Organizations
+              </Button>
+              <Button
+                variant={mode === 'create-new' ? 'contained' : 'outlined'}
+                color="secondary"
+                size="small"
+                startIcon={<Plus size={15} />}
+                onClick={() => {
+                  setMode('create-new');
+                  setShowConfigSection(true);
+                }}
+                sx={{ fontWeight: 600 }}
+              >
+                Start Creation of Organization &amp; Submission
+              </Button>
+            </Box>
+
+            {mode === 'search' && (
+              <Typography variant="caption" color="textSecondary">
+                Search by organization name and/or address. Select a result row to activate submission creation.
+              </Typography>
+            )}
+          </Box>
+
+          {/* MODE 1: SEARCH ORGANIZATIONS */}
+          {mode === 'search' && (
+            <>
+              {/* Search Form Card */}
+              <Card elevation={0} sx={{ mb: 3, border: '1px solid #e2e8f0', borderRadius: 2 }}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Search size={18} style={{ color: '#0284c7' }} />
+                    Search Organizations by Name and Address Elements
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                    Query <code>dbo.PT_PARTY</code> and address elements (Street, City, State, ZIP) in <code>dbo.PT_ADDRESS</code>.
+                  </Typography>
+
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Organization / Insured Name"
+                        placeholder="e.g. Acme Corp, TechSolutions, Apex..."
+                        value={searchName}
+                        onChange={(e) => setSearchName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearch();
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Street Address (Line 1 / Line 2)"
+                        placeholder="e.g. 101 Innovation Blvd, Suite 400..."
+                        value={searchStreet}
+                        onChange={(e) => setSearchStreet(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearch();
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 5 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="City"
+                        placeholder="e.g. San Francisco, Chicago, Austin..."
+                        value={searchCity}
+                        onChange={(e) => setSearchCity(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearch();
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="State"
+                        placeholder="e.g. CA, IL, TX..."
+                        value={searchState}
+                        onChange={(e) => setSearchState(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearch();
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 4 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Postal Code (ZIP)"
+                        placeholder="e.g. 94107, 60601, 78744..."
+                        value={searchZip}
+                        onChange={(e) => setSearchZip(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearch();
+                        }}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12 }} sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', pt: 0.5 }}>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={handleSearch}
+                        disabled={searching}
+                        startIcon={searching ? <CircularProgress size={16} color="inherit" /> : <Search size={16} />}
+                        sx={{ fontWeight: 600, minWidth: 150 }}
+                      >
+                        {searching ? 'Searching...' : 'Search Organizations'}
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        onClick={handleClearSearch}
+                        disabled={searching || (!searchName && !searchStreet && !searchCity && !searchState && !searchZip && !hasSearched)}
+                      >
+                        Clear Search
+                      </Button>
+                      <Box sx={{ flex: 1 }} />
+                      <Button
+                        variant="outlined"
+                        color="secondary"
+                        startIcon={<Plus size={16} />}
+                        onClick={() => {
+                          setMode('create-new');
+                          setShowConfigSection(true);
+                        }}
+                        sx={{ fontWeight: 600 }}
+                      >
+                        Start Creation of Organization &amp; Submission
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* Positive Search Results Table Card */}
+              {hasSearched && searchResults.length > 0 && (
+                <Card elevation={0} sx={{ mb: 3, border: '1px solid #e2e8f0', borderRadius: 2 }}>
+                  <CardContent sx={{ p: 2.5 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Building size={18} style={{ color: '#059669' }} />
+                          Search Results ({searchResults.length} Organizations Found)
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          Click a row to select an organization. Selecting a row activates the submission creation button.
+                        </Typography>
+                      </Box>
+
+                      {/* Top Action Button - disabled until a row is selected */}
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={!selectedOrgId}
+                        onClick={() => setShowConfigSection(true)}
+                        startIcon={<Files size={16} />}
+                        sx={{ fontWeight: 600 }}
+                      >
+                        {selectedOrgId ? `Create Submission for "${selectedOrg?.name}"` : 'Create Submission for Selected Organization'}
+                      </Button>
+                    </Box>
+
+                    {/* Results Table */}
+                    <TableContainer component={Paper} elevation={0} variant="outlined" sx={{ borderRadius: 1.5 }}>
+                      <Table size="small">
+                        <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                          <TableRow>
+                            <TableCell sx={{ width: 50, textAlign: 'center' }}></TableCell>
+                            <TableCell sx={{ fontWeight: 700, width: 80 }}>Party ID</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Organization Name</TableCell>
+                            <TableCell sx={{ fontWeight: 700, width: 160 }}>Classification</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Primary Street Address</TableCell>
+                            <TableCell sx={{ fontWeight: 700, width: 180 }}>City, State &amp; ZIP</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {searchResults.map((org) => {
+                            const isSelected = selectedOrgId === org.id;
+                            const addr = org.primaryAddress;
+                            return (
+                              <TableRow
+                                key={org.id}
+                                hover
+                                selected={isSelected}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setSelectedOrgId(null);
+                                    setShowConfigSection(false);
+                                  } else {
+                                    setSelectedOrgId(org.id);
+                                    setShowConfigSection(true);
+                                  }
+                                }}
+                                sx={{
+                                  cursor: 'pointer',
+                                  bgcolor: isSelected ? 'rgba(2, 132, 199, 0.08) !important' : 'inherit',
+                                  borderLeft: isSelected ? '4px solid #0284c7' : '4px solid transparent',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <TableCell sx={{ textAlign: 'center', p: 0.5 }}>
+                                  <Radio
+                                    size="small"
+                                    checked={isSelected}
+                                    onChange={() => {
+                                      setSelectedOrgId(org.id);
+                                      setShowConfigSection(true);
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ fontWeight: 700, color: isSelected ? '#0284c7' : 'primary.main' }}>
+                                  #{org.id}
+                                </TableCell>
+                                <TableCell sx={{ fontWeight: isSelected ? 700 : 600 }}>
+                                  {org.name}
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={org.partyTypeDisplay || org.partySubType || 'Commercial Insured'}
+                                    size="small"
+                                    sx={{
+                                      fontSize: '0.72rem',
+                                      fontWeight: 600,
+                                      bgcolor: org.partySubType === 'AGENCY' ? '#faf5ff' : '#eff6ff',
+                                      color: org.partySubType === 'AGENCY' ? '#7e22ce' : '#1d4ed8',
+                                      border: org.partySubType === 'AGENCY' ? '1px solid #e9d5ff' : '1px solid #bfdbfe'
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                  {addr ? [addr.line1, addr.line2].filter(Boolean).join(', ') : '—'}
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '0.82rem', color: '#334155' }}>
+                                  {addr && (addr.city || addr.stateCode || addr.postalCode)
+                                    ? `${addr.city || ''}${addr.city && addr.stateCode ? ', ' : ''}${addr.stateCode || ''} ${addr.postalCode || ''}`.trim()
+                                    : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+
+                    {/* Bottom Activation Callout Toolbar */}
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        mt: 2,
+                        p: 1.8,
+                        borderRadius: 2,
+                        bgcolor: selectedOrg ? '#f0f9ff' : '#f8fafc',
+                        border: selectedOrg ? '1px solid #7dd3fc' : '1px dashed #cbd5e1',
+                        flexWrap: 'wrap',
+                        gap: 1.5
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 700, color: selectedOrg ? '#0369a1' : '#64748b' }}>
+                          {selectedOrg ? (
+                            <>
+                              Selected Organization: <strong>{selectedOrg.name}</strong> (ID #{selectedOrg.id})
+                            </>
+                          ) : (
+                            'No organization selected from search results.'
+                          )}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748b' }}>
+                          {selectedOrg ? (
+                            <>
+                              Address: {formatAddress(selectedOrg.primaryAddress)} • Click below to configure submission and attach selected files.
+                            </>
+                          ) : (
+                            'Click any table row above to select it and activate the submission creation button.'
+                          )}
+                        </Typography>
+                      </Box>
+
+                      {/* Primary Requirement: Row is selectable which activates previously inactive button */}
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={!selectedOrgId}
+                        onClick={() => setShowConfigSection(true)}
+                        startIcon={<UserPlus size={16} />}
+                        sx={{ fontWeight: 700 }}
+                      >
+                        Create Submission for Selected Organization
+                      </Button>
+                    </Box>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
+
+          {/* SUBMISSION & ONBOARDING CONFIGURATION PANEL */}
+          {/* Displayed when mode === 'create-new' OR when an existing organization is selected and user activates submission creation */}
+          {(mode === 'create-new' || (selectedOrg && showConfigSection)) && (
+            <Card elevation={0} sx={{ mb: 3, border: '1px solid #cbd5e1', borderRadius: 2 }}>
+              <CardContent sx={{ p: 3 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {mode === 'create-new' ? (
+                    <>
+                      <Plus size={20} style={{ color: '#059669' }} />
+                      1. New Insured Organization &amp; Address Setup
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={20} style={{ color: '#0284c7' }} />
+                      Configure Submission for: {selectedOrg.name} (Party #{selectedOrg.id})
+                    </>
+                  )}
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2.5 }}>
+                  {mode === 'create-new'
+                    ? 'Fill in the new organization and address details to onboard into dbo.PT_PARTY and dbo.PT_ADDRESS.'
+                    : `Associating intake files directly to existing organization record ${selectedOrg.name} in dbo.PT_PARTY.`}
+                </Typography>
+
+                {/* Form fields for New Organization */}
+                {mode === 'create-new' && (
+                  <Paper elevation={0} sx={{ p: 2, mb: 3, bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 2 }}>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 12, sm: 8 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Insured Organization Name"
+                          required
+                          value={newOrgForm.name}
+                          onChange={(e) => setNewOrgForm({ ...newOrgForm, name: e.target.value })}
+                          placeholder="e.g. Apex Health Systems LLC"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 4 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Postal / ZIP Code (5 digits)"
+                          value={newOrgForm.postalCode}
+                          onChange={(e) => handleZipChange(e.target.value)}
+                          placeholder="e.g. 60601"
+                          InputProps={{
+                            endAdornment: zipLookupLoading ? (
+                              <InputAdornment position="end">
+                                <CircularProgress size={16} />
+                              </InputAdornment>
+                            ) : null
+                          }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Street Address Line 1"
+                          value={newOrgForm.line1}
+                          onChange={(e) => setNewOrgForm({ ...newOrgForm, line1: e.target.value })}
+                          placeholder="e.g. 100 Main St"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Suite / Unit / Line 2"
+                          value={newOrgForm.line2}
+                          onChange={(e) => setNewOrgForm({ ...newOrgForm, line2: e.target.value })}
+                          placeholder="e.g. Suite 400"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="City"
+                          value={newOrgForm.city}
+                          onChange={(e) => setNewOrgForm({ ...newOrgForm, city: e.target.value })}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="State Code"
+                          value={newOrgForm.stateCode}
+                          onChange={(e) => setNewOrgForm({ ...newOrgForm, stateCode: e.target.value })}
+                          placeholder="e.g. IL"
+                        />
+                      </Grid>
+                    </Grid>
+                  </Paper>
+                )}
+
+                <Divider sx={{ my: 2.5 }} />
+
+                {/* 2. AGENCY ASSOCIATION SECTION (Requirement: Create a way of associating an agency with the submission) */}
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Users size={18} style={{ color: '#7e22ce' }} />
+                  Associate Agency with Submission
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                  Link an independent retail insurance brokerage or agency to this submission in <code>dbo.UW_SUBMSN (AGENCY_ID, AGENCY_INFO)</code>.
+                </Typography>
+
+                <Paper elevation={0} sx={{ p: 2, mb: 3, bgcolor: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 2 }}>
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Associated Agency / Brokerage</InputLabel>
+                        <Select
+                          value={agencyOption}
+                          label="Associated Agency / Brokerage"
+                          onChange={(e) => setAgencyOption(e.target.value)}
+                        >
+                          <MenuItem value="">
+                            <em>Direct Submission (No Agency / Self-Insured)</em>
+                          </MenuItem>
+                          <MenuItem value="CUSTOM">
+                            <strong>+ Enter Custom / New Agency Name...</strong>
+                          </MenuItem>
+                          {agenciesList.map((ag) => (
+                            <MenuItem key={ag.id} value={String(ag.id)}>
+                              {ag.name} (Party #{ag.id}{ag.primaryAddress?.city ? ` • ${ag.primaryAddress.city}, ${ag.primaryAddress.stateCode}` : ''})
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    {agencyOption === 'CUSTOM' && (
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Custom Agency / Brokerage Name"
+                          required
+                          value={customAgencyName}
+                          onChange={(e) => setCustomAgencyName(e.target.value)}
+                          placeholder="e.g. Gallagher Commercial Brokerage"
+                        />
+                      </Grid>
+                    )}
+
+                    <Grid size={{ xs: 12 }}>
+                      <Typography variant="caption" sx={{ color: '#6b21a8' }}>
+                        {agencyOption === ''
+                          ? 'This submission will be registered as a direct underwriting intake with no broker commission or agency linkage.'
+                          : agencyOption === 'CUSTOM'
+                          ? `Will associate custom brokerage "${customAgencyName || '...'}" directly with the created submission.`
+                          : `Associated agency will be recorded on dbo.UW_SUBMSN and mirrored to dbo.UW_POLICY.`}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </Paper>
+
+                <Divider sx={{ my: 2.5 }} />
+
+                {/* 3. SUBMISSION COVERAGE & DATES SECTION */}
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <FileText size={18} style={{ color: '#0284c7' }} />
+                  Submission Parameters &amp; Policy Terms
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                  Specify lines of coverage, underwriting assignments, policy periods, and coverage limits.
+                </Typography>
+
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Product Line / Coverage</InputLabel>
+                      <Select
+                        value={submissionForm.productType}
+                        label="Product Line / Coverage"
+                        onChange={(e) => setSubmissionForm({ ...submissionForm, productType: e.target.value })}
+                      >
+                        <MenuItem value="Technology Errors & Omissions">Technology Errors &amp; Omissions</MenuItem>
+                        <MenuItem value="Medical Malpractice">Medical Malpractice</MenuItem>
+                        <MenuItem value="Cyber Liability">Cyber Liability &amp; Privacy Risk</MenuItem>
+                        <MenuItem value="Directors & Officers">Directors &amp; Officers</MenuItem>
+                        <MenuItem value="Commercial General Liability">Commercial General Liability</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Assigned Underwriter"
+                      value={submissionForm.underwriter}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, underwriter: e.target.value })}
+                      required
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Effective Date"
+                      type="date"
+                      InputLabelProps={{ shrink: true }}
+                      value={submissionForm.effectiveDate}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, effectiveDate: e.target.value })}
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Expiration Date"
+                      type="date"
+                      InputLabelProps={{ shrink: true }}
+                      value={submissionForm.expirationDate}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, expirationDate: e.target.value })}
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Retroactive Date"
+                      type="date"
+                      InputLabelProps={{ shrink: true }}
+                      value={submissionForm.retroactiveDate}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, retroactiveDate: e.target.value })}
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Occurrence Limit ($)"
+                      value={submissionForm.limitAmount}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, limitAmount: e.target.value })}
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Retention / Deductible ($)"
+                      value={submissionForm.retentionAmount}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, retentionAmount: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+
+                <Divider sx={{ my: 2.5 }} />
+
+                {/* 4. DOCUMENT CLASSIFICATION SECTION */}
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Paperclip size={18} style={{ color: '#0284c7' }} />
+                  Document Intake Classification
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                  Set classification and title metadata for attached inbox files.
+                </Typography>
+
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Document Classification</InputLabel>
+                      <Select
+                        value={submissionForm.docType}
+                        label="Document Classification"
+                        onChange={(e) => setSubmissionForm({ ...submissionForm, docType: e.target.value })}
+                      >
+                        <MenuItem value="APPLICATION">Commercial Application</MenuItem>
+                        <MenuItem value="LOSS_RUNS">Loss Runs &amp; Claim Experience</MenuItem>
+                        <MenuItem value="FINANCIALS">Audited Financial Statements</MenuItem>
+                        <MenuItem value="SCHEDULE">Rating Schedule</MenuItem>
+                        <MenuItem value="ATTACHMENT">General Attachment</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 8 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Document Display Title"
+                      value={submissionForm.docTitle}
+                      onChange={(e) => setSubmissionForm({ ...submissionForm, docTitle: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+
+                {/* SUBMIT BUTTONS */}
+                <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', pt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      if (mode === 'create-new') {
+                        setMode('search');
+                      } else {
+                        setShowConfigSection(false);
+                      }
+                    }}
+                    disabled={submitting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="large"
+                    onClick={handleConfirmCreateSubmission}
+                    disabled={submitting || (mode === 'create-new' && !newOrgForm.name.trim()) || (mode === 'search' && !selectedOrgId)}
+                    startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : <FileCheck size={18} />}
+                    sx={{ fontWeight: 700, px: 3 }}
+                  >
+                    {submitting
+                      ? 'Creating & Attaching Documents...'
+                      : mode === 'create-new'
+                      ? 'Create Organization, Submission & Attach Documents'
+                      : `Create Submission for "${selectedOrg?.name}" & Attach Documents`}
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </Box>
+  );
+};
+
+// ============================================================================
 // Manages unattached inbox documents dropped in C:\helios-storage\documents\<tenant>\inbox
 // Preserves folder groupings, queues files, attaches to submissions/policies,
 // and creates new organizations and submissions on intake.
@@ -4780,12 +6007,19 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [flash, setFlash] = useState(null);
-  const [selectedDocId, setSelectedDocId] = useState(null);
+  const [selectedDocIds, setSelectedDocIds] = useState([]);
+  const [expandedParents, setExpandedParents] = useState({});
+
+  const toggleExpand = (parentId) => {
+    setExpandedParents((prev) => ({
+      ...prev,
+      [parentId]: prev[parentId] === undefined ? false : !prev[parentId]
+    }));
+  };
 
   // Modals state
   const [previewDoc, setPreviewDoc] = useState(null);
   const [attachDoc, setAttachDoc] = useState(null);
-  const [createSubDoc, setCreateSubDoc] = useState(null);
 
   // Attach modal state
   const [attachEntityType, setAttachEntityType] = useState('SUBMISSION');
@@ -4796,22 +6030,6 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
   const [attachCustomTitle, setAttachCustomTitle] = useState('');
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [submittingAttach, setSubmittingAttach] = useState(false);
-
-  // Create submission & org modal state
-  const [createForm, setCreateForm] = useState({
-    orgName: '',
-    underwriter: 'Michael Chang',
-    productType: 'Technology Errors & Omissions',
-    effectiveDate: new Date().toISOString().substring(0, 10),
-    expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
-    retroactiveDate: new Date().toISOString().substring(0, 10),
-    limitAmount: '$1,000,000',
-    retentionAmount: '$10,000',
-    docType: 'APPLICATION',
-    docTitle: ''
-  });
-  const [submittingCreate, setSubmittingCreate] = useState(false);
-  const [createSuccessResult, setCreateSuccessResult] = useState(null);
 
   const loadIncomingDocs = useCallback(async () => {
     setLoading(true);
@@ -4860,9 +6078,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
         method: 'DELETE'
       });
       setFlash({ type: 'info', text: `Incoming document #${incomingId} ("${docName}") marked as discarded.` });
-      if (selectedDocId === incomingId) {
-        setSelectedDocId(null);
-      }
+      setSelectedDocIds((prev) => prev.filter((id) => id !== incomingId));
       await loadIncomingDocs();
     } catch (err) {
       setFlash({ type: 'error', text: `Failed to discard document: ${err.message}` });
@@ -4928,7 +6144,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
         type: 'success',
         text: `Document #${attachDoc.incomingId} successfully attached to ${attachEntityType} ${entityNbr}!`
       });
-      setSelectedDocId(null);
+      setSelectedDocIds([]);
       setAttachDoc(null);
       await loadIncomingDocs();
     } catch (err) {
@@ -4938,61 +6154,12 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
     }
   };
 
-  // Open Create Submission Modal
-  const handleOpenCreateSubModal = (doc) => {
-    setCreateSubDoc(doc);
-    setCreateSuccessResult(null);
-    let autoOrg = doc.groupName ? doc.groupName.replace(/_/g, ' ') : doc.documentName.replace(/_/g, ' ');
-    autoOrg = autoOrg.replace(/batch|acord|app|schedule/gi, '').trim();
-    if (!autoOrg) autoOrg = 'New Applicant Group';
-
-    setCreateForm({
-      orgName: autoOrg,
-      underwriter: 'Michael Chang',
-      productType: 'Technology Errors & Omissions',
-      effectiveDate: new Date().toISOString().substring(0, 10),
-      expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10),
-      retroactiveDate: new Date().toISOString().substring(0, 10),
-      limitAmount: '$1,000,000',
-      retentionAmount: '$10,000',
-      docType: 'APPLICATION',
-      docTitle: `${autoOrg} — Intake Application`
-    });
-  };
-
-  const handleConfirmCreateSubmission = async (e) => {
-    if (e) e.preventDefault();
-    if (!createSubDoc) return;
-    setSubmittingCreate(true);
-    try {
-      const res = await apiFetch(`/document-api/documents/incoming/${createSubDoc.incomingId}/create-submission?tenantId=${activeTenantId}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          orgName: createForm.orgName,
-          underwriter: createForm.underwriter,
-          productType: createForm.productType,
-          effectiveDate: createForm.effectiveDate,
-          expirationDate: createForm.expirationDate,
-          retroactiveDate: createForm.retroactiveDate,
-          limitAmount: createForm.limitAmount,
-          retentionAmount: createForm.retentionAmount,
-          docType: createForm.docType,
-          docTitle: createForm.docTitle,
-          attachedBy: createForm.underwriter
-        })
-      });
-
-      setCreateSuccessResult(res);
-      setFlash({
-        type: 'success',
-        text: `New Organization "${res.orgName}" and Submission ${res.submissionNbr} created successfully with document attached!`
-      });
-      setSelectedDocId(null);
-      await loadIncomingDocs();
-    } catch (err) {
-      setFlash({ type: 'error', text: `Failed to create submission from document: ${err.message}` });
-    } finally {
-      setSubmittingCreate(false);
+  // Launch Create Organization & Submission Page
+  const handleStartCreateSubmission = (docsToProcess) => {
+    const targetDocs = docsToProcess && docsToProcess.length > 0 ? docsToProcess : selectedDocs;
+    if (!targetDocs || targetDocs.length === 0) return;
+    if (onNavigate) {
+      onNavigate('intake-submission', { selectedDocs: targetDocs });
     }
   };
 
@@ -5014,9 +6181,106 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
     });
   }, [docs, filterStatus, searchQuery]);
 
-  const selectedDoc = useMemo(() => {
-    return filteredDocs.find((d) => d.incomingId === selectedDocId) || null;
-  }, [filteredDocs, selectedDocId]);
+  // Group documents into hierarchy: Main email as parent, attachments as children
+  const hierarchicalDocs = useMemo(() => {
+    const groups = new Map();
+    const standalone = [];
+
+    filteredDocs.forEach((doc) => {
+      const gKey = doc.groupId || doc.groupName;
+      if (gKey) {
+        if (!groups.has(gKey)) {
+          groups.set(gKey, []);
+        }
+        groups.get(gKey).push(doc);
+      } else {
+        standalone.push(doc);
+      }
+    });
+
+    const items = [];
+
+    groups.forEach((groupDocs) => {
+      // Find main email doc
+      const emailDoc = groupDocs.find(
+        (d) =>
+          d.documentName?.startsWith('Email - ') ||
+          d.fileName?.startsWith('Email_') ||
+          d.fileName?.toLowerCase().endsWith('.eml') ||
+          d.mimeType?.includes('message/rfc822')
+      ) || (groupDocs.length > 1 ? groupDocs[0] : null);
+
+      if (emailDoc && groupDocs.length > 1) {
+        const children = groupDocs.filter((d) => d.incomingId !== emailDoc.incomingId);
+        items.push({
+          id: `parent-${emailDoc.incomingId}`,
+          isParent: true,
+          parentDoc: emailDoc,
+          children: children,
+          receivedDt: emailDoc.receivedDt
+        });
+      } else {
+        groupDocs.forEach((d) => {
+          items.push({
+            id: `item-${d.incomingId}`,
+            isParent: false,
+            parentDoc: d,
+            children: [],
+            receivedDt: d.receivedDt
+          });
+        });
+      }
+    });
+
+    standalone.forEach((d) => {
+      items.push({
+        id: `item-${d.incomingId}`,
+        isParent: false,
+        parentDoc: d,
+        children: [],
+        receivedDt: d.receivedDt
+      });
+    });
+
+    items.sort((a, b) => (b.parentDoc.incomingId || 0) - (a.parentDoc.incomingId || 0));
+    return items;
+  }, [filteredDocs]);
+
+  const handleToggleParent = (parentDoc, children) => {
+    const familyIds = [parentDoc.incomingId, ...children.map((c) => c.incomingId)];
+    const isFamilyAllSelected = familyIds.every((id) => selectedDocIds.includes(id));
+
+    if (isFamilyAllSelected) {
+      const toRemove = new Set(familyIds);
+      setSelectedDocIds((prev) => prev.filter((id) => !toRemove.has(id)));
+    } else {
+      setSelectedDocIds((prev) => Array.from(new Set([...prev, ...familyIds])));
+    }
+  };
+
+  const handleToggleChild = (childDoc) => {
+    const childId = childDoc.incomingId;
+    setSelectedDocIds((prev) =>
+      prev.includes(childId) ? prev.filter((id) => id !== childId) : [...prev, childId]
+    );
+  };
+
+  const handleToggleSingle = (doc) => {
+    const id = doc.incomingId;
+    setSelectedDocIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectedDocs = useMemo(() => {
+    return filteredDocs.filter((d) => selectedDocIds.includes(d.incomingId));
+  }, [filteredDocs, selectedDocIds]);
+
+  const selectedDoc = selectedDocs[0] || null;
+
+  const totalSelectedBytes = useMemo(() => {
+    return selectedDocs.reduce((acc, d) => acc + (d.fileSizeBytes || 0), 0);
+  }, [selectedDocs]);
 
   const stats = useMemo(() => {
     const total = docs.length;
@@ -5195,7 +6459,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                   color={filterStatus === pill.id ? 'primary' : 'default'}
                   onClick={() => {
                     setFilterStatus(pill.id);
-                    setSelectedDocId(null);
+                    setSelectedDocIds([]);
                   }}
                   sx={{ fontWeight: 600, fontSize: '0.75rem' }}
                 />
@@ -5211,7 +6475,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
             />
           </Box>
 
-          {/* External Action Toolbar - functions on selected row (no radio buttons) */}
+          {/* External Action Toolbar - functions on selected rows */}
           <Box
             sx={{
               display: 'flex',
@@ -5220,8 +6484,8 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
               mb: 2,
               p: 1.5,
               borderRadius: 2,
-              bgcolor: selectedDoc ? '#f0f9ff' : '#f8fafc',
-              border: selectedDoc ? '1px solid #7dd3fc' : '1px dashed #cbd5e1',
+              bgcolor: selectedDocs.length > 0 ? '#f0f9ff' : '#f8fafc',
+              border: selectedDocs.length > 0 ? '1px solid #7dd3fc' : '1px dashed #cbd5e1',
               flexWrap: 'wrap',
               gap: 1.5
             }}
@@ -5232,7 +6496,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                   width: 32,
                   height: 32,
                   borderRadius: 1,
-                  bgcolor: selectedDoc ? '#0284c7' : '#94a3b8',
+                  bgcolor: selectedDocs.length > 0 ? '#0284c7' : '#94a3b8',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -5242,36 +6506,44 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                 <FileText size={18} />
               </Box>
               <Box>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: selectedDoc ? '#0369a1' : '#475569' }}>
-                  {selectedDoc ? (
+                <Typography variant="body2" sx={{ fontWeight: 700, color: selectedDocs.length > 0 ? '#0369a1' : '#475569' }}>
+                  {selectedDocs.length === 1 ? (
                     <>
                       Selected: #{selectedDoc.incomingId} — {selectedDoc.documentName}
+                    </>
+                  ) : selectedDocs.length > 1 ? (
+                    <>
+                      Selected: {selectedDocs.length} documents ({formatFileSize(totalSelectedBytes)})
                     </>
                   ) : (
                     'No document selected'
                   )}
                 </Typography>
                 <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
-                  {selectedDoc ? (
+                  {selectedDocs.length === 1 ? (
                     <>
                       File: <code>{selectedDoc.fileName}</code> • {formatFileSize(selectedDoc.fileSizeBytes)} • {selectedDoc.groupName ? `Batch: ${selectedDoc.groupName}` : 'Standalone File'}
                     </>
+                  ) : selectedDocs.length > 1 ? (
+                    <>
+                      {selectedDocs.map((d) => `#${d.incomingId}`).join(', ')} • Ready for submission intake
+                    </>
                   ) : (
-                    'Click any row in the table to select a document and activate actions.'
+                    'Select one or multiple rows via checkboxes or clicks to activate intake actions.'
                   )}
                 </Typography>
               </Box>
-              {selectedDoc && (
+              {selectedDocs.length > 0 && (
                 <Button
                   size="small"
                   variant="text"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedDocId(null);
+                    setSelectedDocIds([]);
                   }}
                   sx={{ fontSize: '0.75rem', color: '#64748b', minWidth: 'auto', ml: 1 }}
                 >
-                  Deselect
+                  Deselect All
                 </Button>
               )}
             </Box>
@@ -5281,7 +6553,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                 size="small"
                 variant="outlined"
                 startIcon={<Eye size={15} />}
-                disabled={!selectedDoc}
+                disabled={selectedDocs.length !== 1}
                 onClick={() => selectedDoc && setPreviewDoc(selectedDoc)}
                 sx={{ fontWeight: 600 }}
               >
@@ -5291,7 +6563,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                 size="small"
                 variant="outlined"
                 startIcon={<Download size={15} />}
-                disabled={!selectedDoc}
+                disabled={selectedDocs.length !== 1}
                 onClick={() => {
                   if (selectedDoc) {
                     window.open(`/document-api/documents/incoming/${selectedDoc.incomingId}/download?tenantId=${activeTenantId}`, '_blank');
@@ -5306,7 +6578,7 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                 variant="contained"
                 color="secondary"
                 startIcon={<Paperclip size={15} />}
-                disabled={!selectedDoc || selectedDoc.status === 'DISCARDED'}
+                disabled={selectedDocs.length === 0 || selectedDocs.some((d) => d.status === 'DISCARDED')}
                 onClick={() => selectedDoc && handleOpenAttachModal(selectedDoc)}
                 sx={{ fontWeight: 600 }}
               >
@@ -5317,23 +6589,21 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                 variant="contained"
                 color="primary"
                 startIcon={<UserPlus size={15} />}
-                disabled={!selectedDoc || selectedDoc.status === 'DISCARDED'}
-                onClick={() => selectedDoc && handleOpenCreateSubModal(selectedDoc)}
+                disabled={selectedDocs.length === 0 || selectedDocs.some((d) => d.status === 'DISCARDED')}
+                onClick={() => handleStartCreateSubmission(selectedDocs)}
                 sx={{ fontWeight: 600 }}
               >
-                New Submission
+                {selectedDocs.length > 1 ? `New Submission (${selectedDocs.length})` : 'New Submission'}
               </Button>
               <Button
                 size="small"
                 variant="outlined"
                 color="error"
                 startIcon={<Trash2 size={15} />}
-                disabled={!selectedDoc || selectedDoc.status === 'DISCARDED'}
+                disabled={selectedDocs.length === 0 || selectedDocs.some((d) => d.status === 'DISCARDED')}
                 onClick={() => {
-                  if (selectedDoc) {
-                    handleDiscard(selectedDoc.incomingId, selectedDoc.documentName);
-                    setSelectedDocId(null);
-                  }
+                  selectedDocs.forEach((d) => handleDiscard(d.incomingId, d.documentName));
+                  setSelectedDocIds([]);
                 }}
                 sx={{ fontWeight: 600 }}
               >
@@ -5348,7 +6618,20 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
               <TableHead sx={{ backgroundColor: '#f8fafc' }}>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700, width: 60 }}>ID</TableCell>
-                  <TableCell sx={{ fontWeight: 700, width: 40 }}></TableCell>
+                  <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }}>
+                    <Checkbox
+                      size="small"
+                      indeterminate={selectedDocIds.length > 0 && selectedDocIds.length < filteredDocs.length}
+                      checked={filteredDocs.length > 0 && selectedDocIds.length === filteredDocs.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedDocIds(filteredDocs.map((d) => d.incomingId));
+                        } else {
+                          setSelectedDocIds([]);
+                        }
+                      }}
+                    />
+                  </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Document Title &amp; File</TableCell>
                   <TableCell sx={{ fontWeight: 700, width: 220 }}>Folder Group / Batch</TableCell>
                   <TableCell sx={{ fontWeight: 700, width: 160 }}>Received Date</TableCell>
@@ -5377,14 +6660,204 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredDocs.map((doc) => {
-                    const isSelected = selectedDocId === doc.incomingId;
+                  hierarchicalDocs.map((item) => {
+                    if (item.isParent) {
+                      const parentDoc = item.parentDoc;
+                      const children = item.children;
+                      const isExpanded = expandedParents[parentDoc.incomingId] !== false;
+                      const familyIds = [parentDoc.incomingId, ...children.map((c) => c.incomingId)];
+                      const isFamilyAllSelected = familyIds.every((id) => selectedDocIds.includes(id));
+                      const isParentSelected = selectedDocIds.includes(parentDoc.incomingId);
+                      const isAnyChildSelected = children.some((c) => selectedDocIds.includes(c.incomingId));
+                      const isFamilyIndeterminate = !isFamilyAllSelected && (isParentSelected || isAnyChildSelected);
+                      const isHighlight = isParentSelected || isFamilyAllSelected;
+
+                      return (
+                        <React.Fragment key={`group-${parentDoc.incomingId}`}>
+                          {/* Parent Main Email Row */}
+                          <TableRow
+                            hover
+                            selected={isHighlight}
+                            onClick={() => handleToggleParent(parentDoc, children)}
+                            onDoubleClick={() => setPreviewDoc(parentDoc)}
+                            sx={{
+                              cursor: 'pointer',
+                              bgcolor: isHighlight ? 'rgba(2, 132, 199, 0.08) !important' : '#ffffff',
+                              borderLeft: isHighlight ? '4px solid #0284c7' : '4px solid transparent',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <TableCell sx={{ py: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleExpand(parentDoc.incomingId);
+                                  }}
+                                  sx={{ p: 0.2, color: '#64748b' }}
+                                >
+                                  {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                </IconButton>
+                                <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main', fontSize: '0.8rem' }}>
+                                  #{parentDoc.incomingId}
+                                </Typography>
+                              </Box>
+                            </TableCell>
+                            <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                size="small"
+                                checked={isFamilyAllSelected}
+                                indeterminate={isFamilyIndeterminate}
+                                onChange={() => handleToggleParent(parentDoc, children)}
+                              />
+                            </TableCell>
+                            <TableCell sx={{ py: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <Mail size={18} style={{ color: '#0284c7', marginTop: 2, flexShrink: 0 }} />
+                                <Box>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                    <Typography
+                                      variant="body2"
+                                      sx={{
+                                        fontWeight: 700,
+                                        color: isHighlight ? '#0369a1' : '#0f172a'
+                                      }}
+                                    >
+                                      {parentDoc.documentName}
+                                    </Typography>
+                                    <Chip
+                                      size="small"
+                                      label={`${children.length} attachment${children.length > 1 ? 's' : ''}`}
+                                      sx={{
+                                        bgcolor: '#e0f2fe',
+                                        color: '#0369a1',
+                                        fontWeight: 700,
+                                        fontSize: '0.68rem',
+                                        height: 20
+                                      }}
+                                    />
+                                  </Box>
+                                  <code style={{ fontSize: '0.72rem', color: '#64748b' }}>{parentDoc.fileName}</code>
+                                </Box>
+                              </Box>
+                            </TableCell>
+                            <TableCell sx={{ py: 1 }}>
+                              {parentDoc.groupName ? (
+                                <Chip
+                                  icon={<Folder size={13} style={{ marginLeft: 4 }} />}
+                                  label={parentDoc.groupName}
+                                  size="small"
+                                  sx={{
+                                    bgcolor: '#f5f3ff',
+                                    color: '#6d28d9',
+                                    fontWeight: 600,
+                                    fontSize: '0.72rem',
+                                    border: '1px solid #ddd6fe'
+                                  }}
+                                />
+                              ) : (
+                                <Typography variant="caption" color="textSecondary">Standalone File</Typography>
+                              )}
+                            </TableCell>
+                            <TableCell sx={{ fontSize: '0.8rem', color: '#475569', py: 1 }}>
+                              {parentDoc.receivedDt ? String(parentDoc.receivedDt).substring(0, 16) : '—'}
+                            </TableCell>
+                            <TableCell sx={{ fontSize: '0.8rem', color: '#475569', py: 1 }}>
+                              {formatFileSize(parentDoc.fileSizeBytes)}
+                            </TableCell>
+                            <TableCell sx={{ py: 1 }}>
+                              {renderStatusChip(parentDoc.status)}
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Children Attachment Rows */}
+                          {isExpanded &&
+                            children.map((child) => {
+                              const isChildSelected = selectedDocIds.includes(child.incomingId);
+                              return (
+                                <TableRow
+                                  key={child.incomingId}
+                                  hover
+                                  selected={isChildSelected}
+                                  onClick={() => handleToggleChild(child)}
+                                  onDoubleClick={() => setPreviewDoc(child)}
+                                  sx={{
+                                    cursor: 'pointer',
+                                    bgcolor: isChildSelected ? 'rgba(2, 132, 199, 0.08) !important' : '#f8fafc',
+                                    borderLeft: isChildSelected ? '4px solid #0284c7' : '4px solid #cbd5e1',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  <TableCell sx={{ pl: 4.5, py: 0.8, fontWeight: 600, fontSize: '0.78rem', color: '#64748b' }}>
+                                    #{child.incomingId}
+                                  </TableCell>
+                                  <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                                    <Checkbox
+                                      size="small"
+                                      checked={isChildSelected}
+                                      onChange={() => handleToggleChild(child)}
+                                    />
+                                  </TableCell>
+                                  <TableCell sx={{ py: 0.8 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}>
+                                      <CornerDownRight size={15} style={{ color: '#94a3b8', flexShrink: 0 }} />
+                                      <Paperclip size={15} style={{ color: '#0284c7', flexShrink: 0 }} />
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                        <Typography
+                                          variant="body2"
+                                          sx={{
+                                            fontWeight: isChildSelected ? 700 : 600,
+                                            color: isChildSelected ? '#0369a1' : '#334155'
+                                          }}
+                                        >
+                                          {child.documentName}
+                                        </Typography>
+                                        <Chip
+                                          label="Attachment"
+                                          size="small"
+                                          sx={{
+                                            bgcolor: '#f1f5f9',
+                                            color: '#475569',
+                                            fontWeight: 600,
+                                            fontSize: '0.65rem',
+                                            height: 18
+                                          }}
+                                        />
+                                        <code style={{ fontSize: '0.72rem', color: '#64748b' }}>{child.fileName}</code>
+                                      </Box>
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell sx={{ py: 0.8 }}>
+                                    <Typography variant="caption" sx={{ color: '#64748b', fontStyle: 'italic' }}>
+                                      ↳ Attached to #{parentDoc.incomingId}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell sx={{ fontSize: '0.8rem', color: '#475569', py: 0.8 }}>
+                                    {child.receivedDt ? String(child.receivedDt).substring(0, 16) : '—'}
+                                  </TableCell>
+                                  <TableCell sx={{ fontSize: '0.8rem', color: '#475569', py: 0.8 }}>
+                                    {formatFileSize(child.fileSizeBytes)}
+                                  </TableCell>
+                                  <TableCell sx={{ py: 0.8 }}>
+                                    {renderStatusChip(child.status)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                        </React.Fragment>
+                      );
+                    }
+
+                    // Standalone Item
+                    const doc = item.parentDoc;
+                    const isSelected = selectedDocIds.includes(doc.incomingId);
                     return (
                       <TableRow
                         key={doc.incomingId}
                         hover
                         selected={isSelected}
-                        onClick={() => setSelectedDocId(isSelected ? null : doc.incomingId)}
+                        onClick={() => handleToggleSingle(doc)}
                         onDoubleClick={() => setPreviewDoc(doc)}
                         sx={{
                           cursor: 'pointer',
@@ -5396,20 +6869,29 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
                         <TableCell sx={{ fontWeight: 700, color: isSelected ? '#0284c7' : 'primary.main' }}>
                           #{doc.incomingId}
                         </TableCell>
-                        <TableCell sx={{ pr: 0 }}>
-                          <FileText size={18} style={{ color: isSelected ? '#0284c7' : '#64748b' }} />
+                        <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            size="small"
+                            checked={isSelected}
+                            onChange={() => handleToggleSingle(doc)}
+                          />
                         </TableCell>
                         <TableCell>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: isSelected ? 700 : 600,
-                              color: isSelected ? '#0369a1' : '#1e293b'
-                            }}
-                          >
-                            {doc.documentName}
-                          </Typography>
-                          <code style={{ fontSize: '0.72rem', color: '#64748b' }}>{doc.fileName}</code>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <FileText size={18} style={{ color: isSelected ? '#0284c7' : '#64748b', flexShrink: 0 }} />
+                            <Box>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  fontWeight: isSelected ? 700 : 600,
+                                  color: isSelected ? '#0369a1' : '#1e293b'
+                                }}
+                              >
+                                {doc.documentName}
+                              </Typography>
+                              <code style={{ fontSize: '0.72rem', color: '#64748b' }}>{doc.fileName}</code>
+                            </Box>
+                          </Box>
                         </TableCell>
                         <TableCell>
                           {doc.groupName ? (
@@ -5634,195 +7116,6 @@ const IncomingDocumentsView = ({ apiFetch, activeTenantId, activeRole, onNavigat
           >
             {submittingAttach ? 'Attaching...' : 'Confirm Attachment'}
           </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* 3. CREATE NEW ORGANIZATION & SUBMISSION MODAL */}
-      <Dialog
-        open={Boolean(createSubDoc)}
-        onClose={() => !submittingCreate && setCreateSubDoc(null)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1 }}>
-          <UserPlus size={20} style={{ color: '#059669' }} />
-          Create Organization &amp; Submission from Document
-        </DialogTitle>
-        <DialogContent sx={{ pt: 2.5 }}>
-          {createSuccessResult ? (
-            <Box sx={{ py: 2 }}>
-              <Alert severity="success" sx={{ mb: 3 }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                  Submission Created &amp; Document Attached Successfully!
-                </Typography>
-                <Typography variant="body2" sx={{ mt: 0.5 }}>
-                  Organization: <strong>{createSuccessResult.orgName}</strong> (ID #{createSuccessResult.insuredPid})<br />
-                  Submission Number: <strong>{createSuccessResult.submissionNbr}</strong> (ID #{createSuccessResult.submissionId})<br />
-                  Document Attached: <strong>{createSubDoc?.documentName}</strong>
-                </Typography>
-              </Alert>
-
-              <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => {
-                    setCreateSubDoc(null);
-                    setCreateSuccessResult(null);
-                    if (onNavigate) onNavigate('submissions');
-                  }}
-                  startIcon={<Files size={16} />}
-                >
-                  View Submissions
-                </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => {
-                    setCreateSubDoc(null);
-                    setCreateSuccessResult(null);
-                  }}
-                >
-                  Done
-                </Button>
-              </Box>
-            </Box>
-          ) : (
-            <>
-              <Alert severity="info" sx={{ mb: 2.5, fontSize: '0.82rem' }}>
-                Quickly onboard a new insured organization in <code>dbo.PT_PARTY</code>, initialize a new <code>dbo.UW_SUBMSN</code> submission, and attach <strong>{createSubDoc?.fileName}</strong> automatically.
-              </Alert>
-
-              <Grid container spacing={2}>
-                <Grid size={{ xs: 12, sm: 8 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Insured Organization Name"
-                    value={createForm.orgName}
-                    onChange={(e) => setCreateForm({ ...createForm, orgName: e.target.value })}
-                    required
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Assigned Underwriter"
-                    value={createForm.underwriter}
-                    onChange={(e) => setCreateForm({ ...createForm, underwriter: e.target.value })}
-                    required
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Product Line / Coverage</InputLabel>
-                    <Select
-                      value={createForm.productType}
-                      label="Product Line / Coverage"
-                      onChange={(e) => setCreateForm({ ...createForm, productType: e.target.value })}
-                    >
-                      <MenuItem value="Technology Errors & Omissions">Technology Errors &amp; Omissions</MenuItem>
-                      <MenuItem value="Medical Malpractice">Medical Malpractice</MenuItem>
-                      <MenuItem value="Cyber Liability">Cyber Liability &amp; Privacy Risk</MenuItem>
-                      <MenuItem value="Directors & Officers">Directors &amp; Officers</MenuItem>
-                      <MenuItem value="Commercial General Liability">Commercial General Liability</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 3 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Effective Date"
-                    type="date"
-                    InputLabelProps={{ shrink: true }}
-                    value={createForm.effectiveDate}
-                    onChange={(e) => setCreateForm({ ...createForm, effectiveDate: e.target.value })}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 3 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Expiration Date"
-                    type="date"
-                    InputLabelProps={{ shrink: true }}
-                    value={createForm.expirationDate}
-                    onChange={(e) => setCreateForm({ ...createForm, expirationDate: e.target.value })}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Occurrence Limit ($)"
-                    value={createForm.limitAmount}
-                    onChange={(e) => setCreateForm({ ...createForm, limitAmount: e.target.value })}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Retention / Deductible ($)"
-                    value={createForm.retentionAmount}
-                    onChange={(e) => setCreateForm({ ...createForm, retentionAmount: e.target.value })}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Document Type</InputLabel>
-                    <Select
-                      value={createForm.docType}
-                      label="Document Type"
-                      onChange={(e) => setCreateForm({ ...createForm, docType: e.target.value })}
-                    >
-                      <MenuItem value="APPLICATION">Commercial Application</MenuItem>
-                      <MenuItem value="LOSS_RUNS">Loss Runs Report</MenuItem>
-                      <MenuItem value="FINANCIALS">Audited Financials</MenuItem>
-                      <MenuItem value="SCHEDULE">Rating Schedule</MenuItem>
-                      <MenuItem value="ATTACHMENT">Supporting Document</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid size={{ xs: 12 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Document Title"
-                    value={createForm.docTitle}
-                    onChange={(e) => setCreateForm({ ...createForm, docTitle: e.target.value })}
-                  />
-                </Grid>
-              </Grid>
-            </>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
-          {!createSuccessResult && (
-            <>
-              <Button onClick={() => setCreateSubDoc(null)} disabled={submittingCreate}>
-                Cancel
-              </Button>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={handleConfirmCreateSubmission}
-                disabled={submittingCreate || !createForm.orgName}
-                startIcon={submittingCreate ? <CircularProgress size={16} color="inherit" /> : <UserPlus size={16} />}
-                sx={{ fontWeight: 600 }}
-              >
-                {submittingCreate ? 'Creating & Attaching...' : 'Create Org & Submission'}
-              </Button>
-            </>
-          )}
         </DialogActions>
       </Dialog>
     </Box>
@@ -6974,6 +8267,7 @@ export default function App() {
   });
 
   const [activeView, setActiveView] = useState('dashboard');
+  const [intakeSelectedDocs, setIntakeSelectedDocs] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tenants, setTenants] = useState([
     {
@@ -7153,8 +8447,15 @@ export default function App() {
     (item) => item.id === 'dashboard' || item.id === 'inbox' || item.id === 'quotes' || item.id === 'documents' || (tenantModuleSet.has(item.id) && roleModuleSet.has(item.id))
   );
 
+  const handleNavigate = (view, payload) => {
+    if (view === 'intake-submission' && payload?.selectedDocs) {
+      setIntakeSelectedDocs(payload.selectedDocs);
+    }
+    setActiveView(view);
+  };
+
   useEffect(() => {
-    if (!navItems.some((item) => item.id === activeView)) {
+    if (activeView !== 'intake-submission' && !navItems.some((item) => item.id === activeView)) {
       setActiveView('dashboard');
     }
   }, [navItems, activeView]);
@@ -7168,21 +8469,59 @@ export default function App() {
             activeTenantId={activeTenantId}
             currentTenant={currentTenant}
             activeRole={activeRole}
-            onNavigate={setActiveView}
+            onNavigate={handleNavigate}
           />
         );
       case 'inbox':
-        return <IncomingDocumentsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
+        return (
+          <IncomingDocumentsView
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            activeRole={activeRole}
+            onNavigate={handleNavigate}
+          />
+        );
       case 'policy':
         return <PoliciesView apiFetch={apiFetch} activeTenantId={activeTenantId} />;
       case 'submissions':
-        return <SubmissionsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
+        return (
+          <SubmissionsView
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            activeRole={activeRole}
+            onNavigate={handleNavigate}
+          />
+        );
       case 'quotes':
-        return <QuotesView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
+        return (
+          <QuotesView
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            activeRole={activeRole}
+            onNavigate={handleNavigate}
+          />
+        );
       case 'documents':
-        return <DocumentsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} onNavigate={setActiveView} />;
+        return (
+          <DocumentsView
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            activeRole={activeRole}
+            onNavigate={handleNavigate}
+          />
+        );
       case 'claims':
         return <ClaimsView apiFetch={apiFetch} activeTenantId={activeTenantId} activeRole={activeRole} />;
+      case 'intake-submission':
+        return (
+          <CreateOrgSubmissionView
+            apiFetch={apiFetch}
+            activeTenantId={activeTenantId}
+            activeRole={activeRole}
+            selectedDocs={intakeSelectedDocs}
+            onNavigate={handleNavigate}
+          />
+        );
       default:
         return (
           <DashboardView
@@ -7190,7 +8529,7 @@ export default function App() {
             activeTenantId={activeTenantId}
             currentTenant={currentTenant}
             activeRole={activeRole}
-            onNavigate={setActiveView}
+            onNavigate={handleNavigate}
           />
         );
     }
@@ -7204,7 +8543,8 @@ export default function App() {
       submissions: 'Submissions',
       quotes: 'Quotes & Rating',
       documents: 'Documents & Intake Center',
-      claims: 'Claims'
+      claims: 'Claims',
+      'intake-submission': 'Create Organization & Submission from Document'
     };
     return map[activeView] || 'Dashboard';
   };

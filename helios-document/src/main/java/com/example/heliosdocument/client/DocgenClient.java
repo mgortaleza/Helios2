@@ -6,6 +6,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -82,5 +83,52 @@ public class DocgenClient {
             throw new RuntimeException("Document generation failed via DocGen microservice: " + e.getMessage(), e);
         }
     }
-}
 
+    public GeneratedDocumentResult generateEmailPdf(
+            int tenantId,
+            String subject,
+            String from,
+            String to,
+            String dateStr,
+            String bodyText,
+            String bodyHtml,
+            List<String> attachmentNames
+    ) {
+        GenerateDocumentRequest req = new GenerateDocumentRequest(
+                tenantId,
+                "EMAIL",
+                0,
+                "EML-" + (System.currentTimeMillis() % 100000),
+                "EMAIL_BODY",
+                "Email - " + subject,
+                from,
+                null,
+                "Email Correspondence",
+                "Helios Intake Workflow",
+                dateStr,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                attachmentNames,
+                subject,
+                bodyText,
+                to,
+                null,
+                from,
+                null,
+                from,
+                to,
+                dateStr,
+                bodyHtml,
+                attachmentNames
+        );
+        return generate(req);
+    }
+}

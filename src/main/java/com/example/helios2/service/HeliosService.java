@@ -121,8 +121,25 @@ public class HeliosService {
             String date,
             String status,
             FileLevelInfoDto fileLevelInfo,
-            List<QuoteDto> quotes
+            List<QuoteDto> quotes,
+            Integer agencyId,
+            String agencyInfo
     ) {
+        public SubmissionDto(
+                int submsnId,
+                String submsnNbr,
+                int insuredPid,
+                String orgName,
+                Integer policyId,
+                String policyNbr,
+                String productType,
+                String date,
+                String status,
+                FileLevelInfoDto fileLevelInfo,
+                List<QuoteDto> quotes
+        ) {
+            this(submsnId, submsnNbr, insuredPid, orgName, policyId, policyNbr, productType, date, status, fileLevelInfo, quotes, null, null);
+        }
     }
 
     public record TaskDto(
@@ -293,6 +310,7 @@ public class HeliosService {
                             CREATED_DT DATETIME2 DEFAULT GETDATE() NOT NULL
                         );
                         CREATE INDEX IX_pt_address_party_active ON dbo.PT_ADDRESS (PARTY_ID, IS_ACTIVE);
+                    END;
                     IF OBJECT_ID('dbo.REF_ZIP_CODE', 'U') IS NULL
                     BEGIN
                         CREATE TABLE dbo.REF_ZIP_CODE (
@@ -366,6 +384,10 @@ public class HeliosService {
                         ALTER TABLE dbo.UW_SUBMSN ADD LIMIT_AMT VARCHAR(50) NULL;
                     IF COL_LENGTH('dbo.UW_SUBMSN', 'RETENTION_AMT') IS NULL
                         ALTER TABLE dbo.UW_SUBMSN ADD RETENTION_AMT VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_SUBMSN', 'AGENCY_ID') IS NULL
+                        ALTER TABLE dbo.UW_SUBMSN ADD AGENCY_ID INT NULL;
+                    IF COL_LENGTH('dbo.UW_SUBMSN', 'AGENCY_INFO') IS NULL
+                        ALTER TABLE dbo.UW_SUBMSN ADD AGENCY_INFO VARCHAR(255) NULL;
                     """);
 
             // 5. Ensure dbo.UW_QUOTE exists
@@ -530,6 +552,19 @@ public class HeliosService {
 
         // Backfill any existing UW_SUBMSN rows that don't have POLICY_ID or file-level columns populated yet
         backfillExistingSubmissions();
+
+        Integer agencyCount = tenantJdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM dbo.PT_PARTY WHERE PARTY_SUB_TYPE = 'AGENCY'", Integer.class);
+        if (agencyCount != null && agencyCount == 0) {
+            createParty(new CreatePartyRequest("Acme Brokers Inc.", "Acme Brokers Inc.", "ORGANIZATION", "AGENCY", null, null,
+                    new AddressInput("100 Financial Way", "Suite 400", "New York", "NY", "10005", "New York", "US", "Initial Seed")));
+            createParty(new CreatePartyRequest("Global Risk Partners", "Global Risk Partners", "ORGANIZATION", "AGENCY", null, null,
+                    new AddressInput("200 Michigan Ave", "Fl 12", "Chicago", "IL", "60601", "Cook", "US", "Initial Seed")));
+            createParty(new CreatePartyRequest("Marsh Commercial Brokerage", "Marsh Commercial Brokerage", "ORGANIZATION", "AGENCY", null, null,
+                    new AddressInput("500 Market St", "Ste 2200", "San Francisco", "CA", "94105", "San Francisco", "US", "Initial Seed")));
+            createParty(new CreatePartyRequest("Aon Risk Services", "Aon Risk Services", "ORGANIZATION", "AGENCY", null, null,
+                    new AddressInput("200 E Randolph St", "Ste 800", "Chicago", "IL", "60601", "Cook", "US", "Initial Seed")));
+        }
 
         Integer claimCount = tenantJdbcTemplate.queryForObject("SELECT COUNT(*) FROM dbo.CLM_CLAIM", Integer.class);
         if (claimCount != null && claimCount == 0) {
@@ -1013,14 +1048,19 @@ public class HeliosService {
                        ISNULL(s.EXPIRATION_DT, '2027-10-15') AS EXPIRATION_DT,
                        ISNULL(s.RETROACTIVE_DT, '2023-01-01') AS RETROACTIVE_DT,
                        ISNULL(s.LIMIT_AMT, '$5,000,000') AS LIMIT_AMT,
-                       ISNULL(s.RETENTION_AMT, '$50,000') AS RETENTION_AMT
+                       ISNULL(s.RETENTION_AMT, '$50,000') AS RETENTION_AMT,
+                       s.AGENCY_ID,
+                       COALESCE(s.AGENCY_INFO, ap.ORG_NM, pol.AGENCY_INFO, '') AS AGENCY_INFO
                 FROM dbo.UW_SUBMSN s
                 JOIN dbo.PT_PARTY p ON s.INSURED_PID = p.PARTY_ID
+                LEFT JOIN dbo.PT_PARTY ap ON s.AGENCY_ID = ap.PARTY_ID
                 LEFT JOIN dbo.UW_POLICY pol ON s.POLICY_ID = pol.POLICY_ID
                 ORDER BY s.SUBMSN_ID DESC
                 """;
         return tenantJdbcTemplate.query(sql, (rs, rowNum) -> {
             int subId = rs.getInt("SUBMSN_ID");
+            Integer agId = rs.getObject("AGENCY_ID") != null ? rs.getInt("AGENCY_ID") : null;
+            String agInfo = rs.getString("AGENCY_INFO");
             return new SubmissionDto(
                     subId,
                     rs.getString("SUBMSN_NBR"),
@@ -1039,16 +1079,26 @@ public class HeliosService {
                             rs.getString("LIMIT_AMT"),
                             rs.getString("RETENTION_AMT")
                     ),
-                    quotesBySub.getOrDefault(subId, List.of())
+                    quotesBySub.getOrDefault(subId, List.of()),
+                    agId,
+                    agInfo
             );
         });
     }
 
     public List<PartyDto> searchParties(String query) {
-        return searchParties(query, null, null);
+        return searchParties(query, null, null, null);
     }
 
     public List<PartyDto> searchParties(String query, String partyType, String partySubType) {
+        return searchParties(query, null, partyType, partySubType);
+    }
+
+    public List<PartyDto> searchParties(String query, String addressQuery, String partyType, String partySubType) {
+        return searchParties(query, addressQuery, null, null, null, null, partyType, partySubType);
+    }
+
+    public List<PartyDto> searchParties(String query, String addressQuery, String street, String city, String state, String zip, String partyType, String partySubType) {
         ensureTenantSchema();
         StringBuilder sql = new StringBuilder("""
                 SELECT 
@@ -1084,13 +1134,43 @@ public class HeliosService {
                 """);
         List<Object> params = new ArrayList<>();
         if (query != null && !query.isBlank()) {
-            sql.append(" AND (p.ORG_NM LIKE ? OR p.FIRST_NAME LIKE ? OR p.LAST_NAME LIKE ? OR a.CITY LIKE ? OR a.STATE_CODE LIKE ?)");
+            sql.append(" AND (p.ORG_NM LIKE ? OR p.FIRST_NAME LIKE ? OR p.LAST_NAME LIKE ? OR a.LINE1 LIKE ? OR a.CITY LIKE ? OR a.STATE_CODE LIKE ? OR a.POSTAL_CODE LIKE ?)");
             String q = "%" + query.trim() + "%";
             params.add(q);
             params.add(q);
             params.add(q);
             params.add(q);
             params.add(q);
+            params.add(q);
+            params.add(q);
+        }
+        if (addressQuery != null && !addressQuery.isBlank()) {
+            sql.append(" AND (a.LINE1 LIKE ? OR a.LINE2 LIKE ? OR a.CITY LIKE ? OR a.STATE_CODE LIKE ? OR a.POSTAL_CODE LIKE ? OR a.COUNTY LIKE ?)");
+            String aq = "%" + addressQuery.trim() + "%";
+            params.add(aq);
+            params.add(aq);
+            params.add(aq);
+            params.add(aq);
+            params.add(aq);
+            params.add(aq);
+        }
+        if (street != null && !street.isBlank()) {
+            sql.append(" AND (a.LINE1 LIKE ? OR a.LINE2 LIKE ?)");
+            String sq = "%" + street.trim() + "%";
+            params.add(sq);
+            params.add(sq);
+        }
+        if (city != null && !city.isBlank()) {
+            sql.append(" AND a.CITY LIKE ?");
+            params.add("%" + city.trim() + "%");
+        }
+        if (state != null && !state.isBlank()) {
+            sql.append(" AND a.STATE_CODE LIKE ?");
+            params.add("%" + state.trim() + "%");
+        }
+        if (zip != null && !zip.isBlank()) {
+            sql.append(" AND a.POSTAL_CODE LIKE ?");
+            params.add("%" + zip.trim() + "%");
         }
         if (partyType != null && !partyType.isBlank()) {
             sql.append(" AND p.PARTY_TYPE = ?");
@@ -1414,7 +1494,7 @@ public class HeliosService {
     }
 
     public SubmissionDto createSubmission(int partyId) {
-        return createSubmissionWithDetails(partyId, null, null, null, null);
+        return createSubmissionWithDetails(partyId, null, null, null, null, null, null);
     }
 
     public SubmissionDto createSubmissionWithDetails(
@@ -1423,6 +1503,17 @@ public class HeliosService {
             String limit,
             String retention,
             String premium) {
+        return createSubmissionWithDetails(partyId, underwriter, limit, retention, premium, null, null);
+    }
+
+    public SubmissionDto createSubmissionWithDetails(
+            int partyId,
+            String underwriter,
+            String limit,
+            String retention,
+            String premium,
+            Integer agencyId,
+            String agencyInfo) {
         ensureTenantSchema();
         String orgName = tenantJdbcTemplate.queryForObject(
                 "SELECT ORG_NM FROM dbo.PT_PARTY WHERE PARTY_ID = ?",
@@ -1448,19 +1539,31 @@ public class HeliosService {
         String lim = (limit != null && !limit.isBlank()) ? limit.trim() : "$5,000,000";
         String ret = (retention != null && !retention.isBlank()) ? retention.trim() : "$50,000";
         String prem = (premium != null && !premium.isBlank()) ? premium.trim() : "$38,500";
+        Integer resolvedAgencyId = (agencyId != null && agencyId > 0) ? agencyId : null;
+        String resolvedAgencyInfo = (agencyInfo != null && !agencyInfo.isBlank()) ? agencyInfo.trim() : null;
+        if (resolvedAgencyId != null && (resolvedAgencyInfo == null || resolvedAgencyInfo.isBlank())) {
+            try {
+                resolvedAgencyInfo = tenantJdbcTemplate.queryForObject(
+                        "SELECT ORG_NM FROM dbo.PT_PARTY WHERE PARTY_ID = ?", String.class, resolvedAgencyId);
+            } catch (Exception ignored) {}
+        }
 
         String sql = """
                 INSERT INTO dbo.UW_SUBMSN (
                     SUBMSN_NBR, INSURED_PID, POLICY_ID, SUBMSN_DT, STATUS,
-                    UNDERWRITER, EFFECTIVE_DT, EXPIRATION_DT, RETROACTIVE_DT, LIMIT_AMT, RETENTION_AMT
+                    UNDERWRITER, EFFECTIVE_DT, EXPIRATION_DT, RETROACTIVE_DT, LIMIT_AMT, RETENTION_AMT,
+                    AGENCY_ID, AGENCY_INFO
                 )
                 OUTPUT inserted.SUBMSN_ID, inserted.SUBMSN_NBR
                 SELECT 'SUB-' + CAST(ISNULL(MAX(SUBMSN_ID), 99999) + 1 AS VARCHAR(50)),
-                       ?, ?, ?, 'Quoted', ?, ?, ?, ?, ?, ?
+                       ?, ?, ?, 'Quoted', ?, ?, ?, ?, ?, ?, ?, ?
                 FROM dbo.UW_SUBMSN
                 """;
 
-        return tenantJdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+        final String finalAgencyInfo = resolvedAgencyInfo;
+        final Integer finalAgencyId = resolvedAgencyId;
+
+        SubmissionDto created = tenantJdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
             int subId = rs.getInt("SUBMSN_ID");
             String subNbr = rs.getString("SUBMSN_NBR");
             String quoteNbr = "Q-" + subId;
@@ -1477,9 +1580,19 @@ public class HeliosService {
                     today,
                     "Quoted",
                     new FileLevelInfoDto(uw, today, nextYear, retro, lim, ret),
-                    List.of(quote)
+                    List.of(quote),
+                    finalAgencyId,
+                    finalAgencyInfo
             );
-        }, partyId, policyId, today, uw, today, nextYear, retro, lim, ret);
+        }, partyId, policyId, today, uw, today, nextYear, retro, lim, ret, finalAgencyId, finalAgencyInfo);
+
+        if (finalAgencyInfo != null && !finalAgencyInfo.isBlank()) {
+            try {
+                tenantJdbcTemplate.update("UPDATE dbo.UW_POLICY SET AGENCY_INFO = ? WHERE POLICY_ID = ?", finalAgencyInfo, policyId);
+            } catch (Exception ignored) {}
+        }
+
+        return created;
     }
 
     public List<ClaimDto> getAllClaims() {

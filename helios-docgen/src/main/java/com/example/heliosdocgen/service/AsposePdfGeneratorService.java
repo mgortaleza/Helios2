@@ -16,6 +16,7 @@ import com.aspose.pdf.Color;
 import com.aspose.pdf.Document;
 import com.aspose.pdf.FontRepository;
 import com.aspose.pdf.HorizontalAlignment;
+import com.aspose.pdf.HtmlFragment;
 import com.aspose.pdf.MarginInfo;
 import com.aspose.pdf.Page;
 import com.aspose.pdf.Row;
@@ -35,8 +36,74 @@ public class AsposePdfGeneratorService {
         return switch (docType) {
             case "QUOTE_PROPOSAL", "QUOTE" -> generateQuoteProposal(req);
             case "BINDER_LETTER", "LETTER" -> generateBinderLetter(req);
+            case "EMAIL", "EMAIL_BODY", "EMAIL_DOCUMENT" -> generateEmailDocument(req);
             default -> generateDecPage(req);
         };
+    }
+
+    public GeneratedPdf generateEmailDocument(GenerateDocumentRequest req) {
+        Document doc = new Document();
+        Page page = doc.getPages().add();
+        setupPageMargins(page);
+
+        // Header Banner
+        addBrandHeader(page, "HELIOS DOCUMENT MANAGEMENT", "INCOMING ELECTRONIC MAIL (EML) INTAKE RECORD");
+
+        // Document Title
+        String subject = safe(req.letterSubject(), safe(req.docTitle(), "No Subject"));
+        addSectionTitle(page, "EMAIL INTAKE MANIFEST — " + subject);
+
+        // Metadata Table
+        Table metaTable = new Table();
+        metaTable.setColumnWidths("120 400");
+        metaTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
+        metaTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
+        metaTable.setMargin(new MarginInfo(0, 5, 0, 15));
+
+        addMetaRow2(metaTable, "Subject:", subject);
+        addMetaRow2(metaTable, "From:", safe(req.emailFrom(), safe(req.signatoryName(), "Unknown Sender")));
+        addMetaRow2(metaTable, "To:", safe(req.emailTo(), safe(req.recipientName(), "Helios Intake")));
+        addMetaRow2(metaTable, "Date Received:", safe(req.emailDate(), LocalDate.now().toString()));
+
+        List<String> attachments = req.emailAttachments() != null ? req.emailAttachments() : req.attachedForms();
+        if (attachments != null && !attachments.isEmpty()) {
+            StringBuilder attSb = new StringBuilder();
+            for (int i = 0; i < attachments.size(); i++) {
+                if (i > 0) attSb.append("\n");
+                attSb.append((i + 1)).append(". ").append(attachments.get(i));
+            }
+            addMetaRow2(metaTable, "Extracted Attachments:", attSb.toString());
+        } else {
+            addMetaRow2(metaTable, "Extracted Attachments:", "None (Standalone correspondence)");
+        }
+        page.getParagraphs().add(metaTable);
+
+        // Email Content Header
+        addSectionHeader(page, "EMAIL MESSAGE BODY");
+
+        // Body Content
+        String bodyHtml = req.emailBodyHtml();
+        String bodyText = req.letterBody();
+
+        if (bodyHtml != null && !bodyHtml.isBlank()) {
+            try {
+                HtmlFragment htmlFrag = new HtmlFragment(bodyHtml);
+                page.getParagraphs().add(htmlFrag);
+            } catch (Exception ex) {
+                log.warn("Failed to render email HTML fragment, falling back to text: {}", ex.getMessage());
+                TextFragment textFrag = new TextFragment(safe(bodyText, "(Empty message body)"));
+                textFrag.getTextState().setFontSize(9.5f);
+                textFrag.getTextState().setLineSpacing(4);
+                page.getParagraphs().add(textFrag);
+            }
+        } else {
+            TextFragment textFrag = new TextFragment(safe(bodyText, "(Empty message body)"));
+            textFrag.getTextState().setFontSize(9.5f);
+            textFrag.getTextState().setLineSpacing(4);
+            page.getParagraphs().add(textFrag);
+        }
+
+        return saveDocument(doc);
     }
 
     public GeneratedPdf generateDecPage(GenerateDocumentRequest req) {
@@ -102,29 +169,29 @@ public class AsposePdfGeneratorService {
         // Forms & Endorsements Schedule
         addSectionHeader(page, "SCHEDULE OF FORMS & ENDORSEMENTS MADE PART OF THIS POLICY");
         Table formsTable = new Table();
-        formsTable.setColumnWidths("140 380");
+        formsTable.setColumnWidths("130 390");
         formsTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
         formsTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
-        formsTable.setMargin(new MarginInfo(0, 5, 0, 15));
+        formsTable.setMargin(new MarginInfo(0, 5, 0, 12));
 
-        List<String> forms = (req.attachedForms() != null && !req.attachedForms().isEmpty())
-                ? req.attachedForms()
-                : List.of(
-                        "EO-2025-BASE (Standard Technology E&O Policy Jacket)",
-                        "CYBER-104-SEC (Security Breach & Regulatory Defense Endorsement)",
-                        "NOTICE-60D (Statutory 60-Day Cancellation & Nonrenewal Notice)",
-                        "TERR-CA-ADVISORY (California DOI Approved Rate Filing Specification)"
-                );
+        Row fHeader = formsTable.getRows().add();
+        addHeaderCell(fHeader, "Form Number");
+        addHeaderCell(fHeader, "Form Title / Regulatory Caption");
 
-        for (String f : forms) {
-            String code = f.contains(" ") ? f.substring(0, f.indexOf(" ")) : f;
-            String desc = f.contains(" ") ? f.substring(f.indexOf(" ") + 1) : "Standard Endorsement";
-            addDataRow2(formsTable, code, desc);
+        addDataRow2(formsTable, "IL-0017 (11/98)", "Common Policy Conditions - Specialty Lines");
+        addDataRow2(formsTable, "PL-1001 (01/24)", "Errors & Omissions Coverage Part Jacket");
+        addDataRow2(formsTable, "CY-2005 (06/25)", "Cyber Risk & Network Security Endorsement");
+        addDataRow2(formsTable, "SL-TRIA (01/21)", "Terrorism Risk Insurance Act Mandatory Offer / Cap");
+
+        if (req.attachedForms() != null) {
+            for (String f : req.attachedForms()) {
+                addDataRow2(formsTable, "CUSTOM-ENDORSE", f);
+            }
         }
         page.getParagraphs().add(formsTable);
 
-        // Signature Execution Block
-        addSignatureBlock(page, safe(req.underwriterName(), "Michael Chang"), "Senior Underwriter, Helios Insurance Suite");
+        // Signature & Attestation Block
+        addSignatureBlock(page, safe(req.underwriterName(), "Michael Chang"), "Authorized Underwriting Representative");
 
         return saveDocument(doc);
     }
@@ -134,67 +201,62 @@ public class AsposePdfGeneratorService {
         Page page = doc.getPages().add();
         setupPageMargins(page);
 
-        addBrandHeader(page, "HELIOS COMMERCIAL UNDERWRITING", "OFFICIAL RATED QUOTE PROPOSAL");
-        addSectionTitle(page, "QUOTE PROPOSAL — " + safe(req.entityNbr(), "Q-4432A"));
+        addBrandHeader(page, "HELIOS SPECIALTY UNDERWRITING", "OFFICIAL COMMERCIAL POLICY QUOTATION PROPOSAL");
+        addSectionTitle(page, "SPECIALTY LINES QUOTE PROPOSAL — " + safe(req.productType(), "Tech E&O"));
 
-        // Quote Metadata
-        Table meta = new Table();
-        meta.setColumnWidths("130 140 110 140");
-        meta.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
-        meta.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
-        meta.setMargin(new MarginInfo(0, 10, 0, 12));
-
-        addMetaRow(meta, "Quote Reference:", safe(req.entityNbr(), "Q-4432A"), "Submission Ref:", "SUB-" + safe(String.valueOf(req.entityId()), "9921"));
-        addMetaRow(meta, "Named Insured:", safe(req.insuredName(), "TechSolutions Corp"), "SERFF Filing Number:", safe(req.serffTrackingNumber(), "CA-2025-0812-EO"));
-        addMetaRow(meta, "Product Line:", safe(req.productType(), "Technology E&O"), "Base Loss Rate:", "$" + safe(req.baseRate(), "1.85") + " / $1k Exposure");
-        addMetaRow(meta, "Schedule Modifier:", safe(req.scheduleMod(), "0.90") + " (10% Credit Applied)", "Quote Valid Until:", LocalDate.now().plusDays(30).toString());
-        page.getParagraphs().add(meta);
-
-        // Underwriting & Coverage Summary
-        addSectionHeader(page, "PROPOSED TERMS & ANNUAL PREMIUM");
+        // Summary Table
         Table sumTable = new Table();
-        sumTable.setColumnWidths("260 130 130");
+        sumTable.setColumnWidths("130 140 110 140");
         sumTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
-        sumTable.setDefaultCellPadding(new MarginInfo(6, 6, 6, 6));
-        sumTable.setMargin(new MarginInfo(0, 5, 0, 12));
+        sumTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
+        sumTable.setMargin(new MarginInfo(0, 10, 0, 15));
 
-        Row sHeader = sumTable.getRows().add();
-        addHeaderCell(sHeader, "Coverage Term");
-        addHeaderCell(sHeader, "Limit");
-        addHeaderCell(sHeader, "Retention");
-
-        addDataRow3(sumTable, safe(req.productType(), "Technology E&O Primary"), safe(req.limitAmount(), "$5,000,000"), safe(req.retentionAmount(), "$50,000"));
-        addDataRow3(sumTable, "Proposed Annual Premium", safe(req.premiumAmount(), "$32,500"), "Paid in Advance");
+        addMetaRow(sumTable, "Quote / Submsn #:", "SUB-" + safe(req.entityNbr(), "9921"), "Proposal Date:", LocalDate.now().toString());
+        addMetaRow(sumTable, "Applicant:", safe(req.insuredName(), "TechSolutions Corp"), "Broker Agency:", safe(req.agencyInfo(), "Acme Brokers"));
+        addMetaRow(sumTable, "Proposed Term:", safe(req.effectiveDate(), "2026-10-01") + " to " + safe(req.expirationDate(), "2027-10-01"), "Quote Valid Until:", LocalDate.now().plusDays(30).toString());
         page.getParagraphs().add(sumTable);
 
-        // Rating Engine Trace & Calculation Audit
-        addSectionHeader(page, "REGULATORY RATING ENGINE CALCULATION AUDIT TRACE");
-        Table traceTable = new Table();
-        traceTable.setColumnWidths("520");
-        traceTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
-        traceTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
-        traceTable.setMargin(new MarginInfo(0, 5, 0, 15));
+        // Limits & Rating Breakdown
+        addSectionHeader(page, "PROPOSED COVERAGE TERMS & PRICING INDICATION");
+        Table rateTable = new Table();
+        rateTable.setColumnWidths("300 220");
+        rateTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, Color.getLightGray()));
+        rateTable.setDefaultCellPadding(new MarginInfo(6, 6, 6, 6));
+        rateTable.setMargin(new MarginInfo(0, 5, 0, 15));
 
-        List<String> traces = (req.calculationTrace() != null && !req.calculationTrace().isEmpty())
-                ? req.calculationTrace()
-                : List.of(
-                        "1. [Filing Verification] SERFF CA-2025-0812-EO active and approved by CA DOI",
-                        "2. [Exposure Normalization] $10,000,000 revenue exposure = 10,000 rating units",
-                        "3. [Base Loss Cost] $1.85 base rate per unit = $18,500 unadjusted base loss cost",
-                        "4. [Relativities Application] Territory Mod 1.25 * Limit Factor 1.80 * Ded Factor 0.90",
-                        "5. [Schedule Modification] Mod factor 0.90 applied (capped at maximum allowed 25% credit)"
-                );
+        addDataRow2(rateTable, "Coverage Part / LOB:", safe(req.productType(), "Technology Errors & Omissions"));
+        addDataRow2(rateTable, "Each Claim Limit of Liability:", safe(req.limitAmount(), "$5,000,000"));
+        addDataRow2(rateTable, "Policy Aggregate Limit:", safe(req.limitAmount(), "$5,000,000"));
+        addDataRow2(rateTable, "Self-Insured Retention (Each Claim):", safe(req.retentionAmount(), "$50,000"));
+        addDataRow2(rateTable, "Base Rate per $1k Gross Revenue:", safe(req.baseRate(), "$12.50"));
+        addDataRow2(rateTable, "Underwriter Schedule Factor:", safe(req.scheduleMod(), "0.950 (5% Tier-1 Credit)"));
 
-        for (String t : traces) {
-            Row r = traceTable.getRows().add();
-            Cell c = r.getCells().add();
-            TextFragment tf = new TextFragment(t);
-            tf.getTextState().setFont(FontRepository.findFont("Courier"));
-            tf.getTextState().setFontSize(8.5f);
-            tf.getTextState().setForegroundColor(rgb(30, 41, 59));
-            c.getParagraphs().add(tf);
+        Row premR = rateTable.getRows().add();
+        addStyledCell(premR, "ANNUAL INDICATED QUOTE PREMIUM:", true, 9, Color.getBlack(), rgb(241, 245, 249));
+        addStyledCell(premR, safe(req.premiumAmount(), "$32,500"), true, 10, rgb(2, 132, 199), rgb(241, 245, 249));
+        page.getParagraphs().add(rateTable);
+
+        // Rating Audit Trace (BRMS / Rule Flow Audit Steps)
+        if (req.calculationTrace() != null && !req.calculationTrace().isEmpty()) {
+            addSectionHeader(page, "UNDERWRITING RATING ENGINE AUDIT TRACE");
+            Table traceTable = new Table();
+            traceTable.setColumnWidths("520");
+            traceTable.setDefaultCellBorder(new BorderInfo(BorderSide.All, 0.5f, rgb(226, 232, 240)));
+            traceTable.setDefaultCellPadding(new MarginInfo(4, 4, 4, 4));
+            traceTable.setMargin(new MarginInfo(0, 5, 0, 15));
+
+            for (String step : req.calculationTrace()) {
+                Row tr = traceTable.getRows().add();
+                Cell c = tr.getCells().add();
+                c.setBackgroundColor(rgb(248, 250, 252));
+                TextFragment tf = new TextFragment("•  " + step);
+                tf.getTextState().setFont(FontRepository.findFont("Helvetica"));
+                tf.getTextState().setFontSize(8.5f);
+                tf.getTextState().setForegroundColor(rgb(30, 41, 59));
+                c.getParagraphs().add(tf);
+            }
+            page.getParagraphs().add(traceTable);
         }
-        page.getParagraphs().add(traceTable);
 
         // Acceptance Disclaimer
         TextFragment disc = new TextFragment("This quote is conditioned upon receipt and review of satisfactory signed application warranty statement and no material change in loss activity prior to binding.");
@@ -334,6 +396,12 @@ public class AsposePdfGeneratorService {
         addStyledCell(r, val1, false, 8.5f, Color.getBlack(), null);
         addStyledCell(r, label2, true, 8, rgb(71, 85, 105), rgb(248, 250, 252));
         addStyledCell(r, val2, false, 8.5f, Color.getBlack(), null);
+    }
+
+    private void addMetaRow2(Table t, String label, String value) {
+        Row r = t.getRows().add();
+        addStyledCell(r, label, true, 8.5f, rgb(71, 85, 105), rgb(248, 250, 252));
+        addStyledCell(r, value, false, 8.5f, Color.getBlack(), null);
     }
 
     private void addDataRow2(Table t, String col1, String col2) {
