@@ -48,6 +48,7 @@ import {
   RadioGroup,
   FormControlLabel
 } from '@mui/material';
+import TemplateAdminManager from './TemplateAdminManager';
 import {
   LayoutGrid,
   FileText,
@@ -835,6 +836,7 @@ const PoliciesView = ({ apiFetch, activeTenantId }) => {
             defaultExpirationDate={activeFile?.fileLevelInfo?.expirationDate || '2027-03-01'}
             defaultLimit={activeFile?.fileLevelInfo?.limit || '$2,000,000'}
             defaultDeductible={activeFile?.fileLevelInfo?.retention || '$25,000'}
+            defaultPremium={activeFile?.quotes?.[0]?.premium || null}
             quotes={activeFile?.quotes || []}
             title={`Policy Documents & Formal Schedules — ${selectedPolicy.name}`}
           />
@@ -1004,6 +1006,7 @@ const INITIAL_PARTY_FORM = {
 const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
   const [subTab, setSubTab] = useState(0);
   const [subDetailTab, setSubDetailTab] = useState(0);
+  const [docGenQuote, setDocGenQuote] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [parties, setParties] = useState([]);
   const [selectedPartyId, setSelectedPartyId] = useState(null);
@@ -1564,7 +1567,7 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
                               variant="outlined"
                               startIcon={<Printer size={13} />}
                               sx={{ ml: 1 }}
-                              onClick={() => setSubDetailTab(1)}
+                              onClick={() => { setDocGenQuote(q); setSubDetailTab(1); }}
                             >
                               PDF
                             </Button>
@@ -1592,7 +1595,9 @@ const SubmissionsView = ({ apiFetch, activeTenantId, activeRole }) => {
             defaultExpirationDate={selectedSub.fileLevelInfo?.expirationDate || '2027-03-01'}
             defaultLimit={selectedSub.fileLevelInfo?.limit || '$2,000,000'}
             defaultDeductible={selectedSub.fileLevelInfo?.retention || '$25,000'}
+            defaultPremium={selectedSub.quotes?.[0]?.premium || null}
             quotes={selectedSub.quotes || []}
+            targetQuote={docGenQuote}
             title={`Submission Documents & Forms — ${selectedSub.submsnNbr}`}
           />
         )}
@@ -3688,13 +3693,63 @@ const QuotesView = ({ apiFetch, activeTenantId, activeRole, onNavigate }) => {
                         <StatusPill status={q.status} />
                       </TableCell>
                       <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => setInspectingQuote({ ...q, orgName: sub?.orgName, submsnNbr: sub?.submsnNbr })}
-                        >
-                          Trace
-                        </Button>
+                        <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => setInspectingQuote({ ...q, orgName: sub?.orgName, submsnNbr: sub?.submsnNbr })}
+                          >
+                            Trace
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Printer size={13} />}
+                            onClick={async () => {
+                              try {
+                                const cleanPrem = parseFloat(String(q.premium || '').replace(/[^0-9.-]/g, '')) || 0;
+                                const formattedPrem = `${cleanPrem.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                let trace = [];
+                                if (q.calcTrace) {
+                                  try {
+                                    const parsed = JSON.parse(q.calcTrace);
+                                    if (Array.isArray(parsed)) trace = parsed;
+                                  } catch {
+                                    trace = [q.calcTrace];
+                                  }
+                                }
+                                const res = await apiFetch('/document-api/documents/generate', {
+                                  method: 'POST',
+                                  body: JSON.stringify({
+                                    tenantId: Number(activeTenantId),
+                                    entityType: 'SUBMISSION',
+                                    entityId: q.submsnId || 101,
+                                    entityNbr: sub?.submsnNbr || q.quoteId,
+                                    docType: 'QUOTE_PROPOSAL',
+                                    insuredName: sub?.orgName || 'Commercial Policyholder',
+                                    productType: q.productCode || sub?.productType || 'Technology Errors & Omissions',
+                                    premiumAmount: formattedPrem,
+                                    limitAmount: q.limitAmt || '$5,000,000',
+                                    retentionAmount: q.retentionAmt || '$50,000',
+                                    serffTrackingNumber: q.serffTrackingNbr || undefined,
+                                    baseRate: q.baseRate ? String(q.baseRate) : undefined,
+                                    scheduleMod: q.scheduleMod ? String(q.scheduleMod) : undefined,
+                                    calculationTrace: trace.length > 0 ? trace : undefined
+                                  })
+                                });
+                                setFlash({
+                                  type: 'success',
+                                  text: `Quote Proposal PDF for ${q.quoteId} (${q.premium}) successfully generated!`
+                                });
+                                window.open(`/document-api/documents/${res.documentId}/download?tenantId=${activeTenantId}`, '_blank');
+                              } catch (err) {
+                                setFlash({ type: 'error', text: `Failed to generate PDF for ${q.quoteId}: ${err.message}` });
+                              }
+                            }}
+                          >
+                            PDF
+                          </Button>
+                        </Box>
                       </TableCell>
                     </TableRow>
                   );
@@ -3739,13 +3794,14 @@ const DocumentsManager = ({
   entityNbr = '',
   defaultInsuredName = '',
   defaultProductType = 'Technology Errors & Omissions',
-  defaultPremium = '$8,500',
+  defaultPremium = null,
   defaultLimit = '$2,000,000',
   defaultDeductible = '$25,000',
   defaultEffectiveDate = '2026-03-01',
   defaultExpirationDate = '2027-03-01',
   quotes = [],
-  title = 'Documents & Forms'
+  title = 'Documents & Forms',
+  targetQuote = null
 }) => {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3772,20 +3828,26 @@ const DocumentsManager = ({
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Determine effective quote and defaults
+  const activeQuote = targetQuote || ((quotes && quotes.length > 0) ? quotes[0] : null);
+  const effectiveInitPrem = defaultPremium || activeQuote?.premium || '$8,500';
+  const effectiveInitLimit = defaultLimit || activeQuote?.limitAmt || '$2,000,000';
+  const effectiveInitDed = defaultDeductible || activeQuote?.retentionAmt || '$25,000';
+
   // Generator form state
   const [genForm, setGenForm] = useState({
-    docType: 'DEC_PAGE',
+    docType: targetQuote ? 'QUOTE_PROPOSAL' : 'DEC_PAGE',
     entityType: entityType || 'POLICY',
     entityId: entityId || 101,
     entityNbr: entityNbr || 'POL-2026-00101',
     insuredName: defaultInsuredName || 'Insured Enterprise LLC',
-    productType: defaultProductType || 'Technology Errors & Omissions',
-    annualPremium: String(defaultPremium || '$8,500').replace(/[^0-9.]/g, '') || '8500',
-    coverageLimit: String(defaultLimit || '$2,000,000').replace(/[^0-9.]/g, '') || '2000000',
-    deductible: String(defaultDeductible || '$25,000').replace(/[^0-9.]/g, '') || '25000',
+    productType: activeQuote?.productCode || defaultProductType || 'Technology Errors & Omissions',
+    annualPremium: String(effectiveInitPrem).replace(/[^0-9.]/g, '') || '8500',
+    coverageLimit: String(effectiveInitLimit).replace(/[^0-9.]/g, '') || '2000000',
+    deductible: String(effectiveInitDed).replace(/[^0-9.]/g, '') || '25000',
     effectiveDate: defaultEffectiveDate || '2026-03-01',
     expirationDate: defaultExpirationDate || '2027-03-01',
-    selectedQuoteId: ''
+    selectedQuoteId: activeQuote?.quoteId ? String(activeQuote.quoteId) : ''
   });
 
   const loadDocuments = useCallback(async () => {
@@ -3811,20 +3873,31 @@ const DocumentsManager = ({
 
   // Sync generator form whenever props change
   useEffect(() => {
+    const q = targetQuote || ((quotes && quotes.length > 0) ? quotes[0] : null);
+    const prem = defaultPremium || q?.premium || '$8,500';
+    const lim = defaultLimit || q?.limitAmt || '$2,000,000';
+    const ded = defaultDeductible || q?.retentionAmt || '$25,000';
+
     setGenForm((prev) => ({
       ...prev,
       entityType: entityType || prev.entityType || 'POLICY',
       entityId: entityId || prev.entityId || 101,
       entityNbr: entityNbr || prev.entityNbr || 'POL-2026-00101',
       insuredName: defaultInsuredName || prev.insuredName,
-      productType: defaultProductType || prev.productType,
-      annualPremium: String(defaultPremium || '$8,500').replace(/[^0-9.]/g, '') || '8500',
-      coverageLimit: String(defaultLimit || '$2,000,000').replace(/[^0-9.]/g, '') || '2000000',
-      deductible: String(defaultDeductible || '$25,000').replace(/[^0-9.]/g, '') || '25000',
+      productType: q?.productCode || defaultProductType || prev.productType,
+      annualPremium: String(prem).replace(/[^0-9.]/g, '') || prev.annualPremium,
+      coverageLimit: String(lim).replace(/[^0-9.]/g, '') || prev.coverageLimit,
+      deductible: String(ded).replace(/[^0-9.]/g, '') || prev.deductible,
       effectiveDate: defaultEffectiveDate || prev.effectiveDate,
-      expirationDate: defaultExpirationDate || prev.expirationDate
+      expirationDate: defaultExpirationDate || prev.expirationDate,
+      selectedQuoteId: q?.quoteId ? String(q.quoteId) : prev.selectedQuoteId,
+      docType: targetQuote ? 'QUOTE_PROPOSAL' : prev.docType
     }));
-  }, [entityType, entityId, entityNbr, defaultInsuredName, defaultProductType, defaultPremium, defaultLimit, defaultDeductible, defaultEffectiveDate, defaultExpirationDate]);
+
+    if (targetQuote) {
+      setOpenGenerateModal(true);
+    }
+  }, [entityType, entityId, entityNbr, defaultInsuredName, defaultProductType, defaultPremium, defaultLimit, defaultDeductible, defaultEffectiveDate, defaultExpirationDate, targetQuote, quotes]);
 
   const handleSelectQuoteForGen = (quoteId) => {
     const q = (quotes || []).find((item) => String(item.quoteId) === String(quoteId));
@@ -3847,6 +3920,25 @@ const DocumentsManager = ({
     if (e) e.preventDefault();
     setGenerating(true);
     try {
+      const numPremium = parseFloat(String(genForm.annualPremium || '').replace(/[^0-9.-]/g, '')) || 0;
+      const numLimit = parseFloat(String(genForm.coverageLimit || '').replace(/[^0-9.-]/g, '')) || 0;
+      const numDed = parseFloat(String(genForm.deductible || '').replace(/[^0-9.-]/g, '')) || 0;
+
+      const formattedPremium = `${numPremium.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const formattedLimit = `${numLimit.toLocaleString()}`;
+      const formattedDed = `${numDed.toLocaleString()}`;
+
+      const selectedQuote = (quotes || []).find((q) => String(q.quoteId) === String(genForm.selectedQuoteId));
+      let traceLines = [];
+      if (selectedQuote?.calcTrace) {
+        try {
+          const parsed = JSON.parse(selectedQuote.calcTrace);
+          if (Array.isArray(parsed)) traceLines = parsed;
+        } catch {
+          traceLines = [selectedQuote.calcTrace];
+        }
+      }
+
       const payload = {
         tenantId: Number(activeTenantId),
         entityType: genForm.entityType,
@@ -3855,11 +3947,18 @@ const DocumentsManager = ({
         docType: genForm.docType,
         insuredName: genForm.insuredName,
         productType: genForm.productType,
-        annualPremium: parseFloat(genForm.annualPremium) || 0,
-        coverageLimit: parseFloat(genForm.coverageLimit) || 0,
-        deductible: parseFloat(genForm.deductible) || 0,
+        premiumAmount: formattedPremium,
+        limitAmount: formattedLimit,
+        retentionAmount: formattedDed,
+        annualPremium: numPremium,
+        coverageLimit: numLimit,
+        deductible: numDed,
         effectiveDate: genForm.effectiveDate,
-        expirationDate: genForm.expirationDate
+        expirationDate: genForm.expirationDate,
+        serffTrackingNumber: selectedQuote?.serffTrackingNbr || undefined,
+        baseRate: selectedQuote?.baseRate ? String(selectedQuote.baseRate) : undefined,
+        scheduleMod: selectedQuote?.scheduleMod ? String(selectedQuote.scheduleMod) : undefined,
+        calculationTrace: traceLines.length > 0 ? traceLines : undefined
       };
 
       const result = await apiFetch('/document-api/documents/generate', {

@@ -94,7 +94,12 @@ public class DocumentController {
                 req.recipientName(),
                 req.recipientTitle(),
                 req.signatoryName(),
-                req.signatoryTitle()
+                req.signatoryTitle(),
+                req.emailFrom(),
+                req.emailTo(),
+                req.emailDate(),
+                req.emailBodyHtml(),
+                req.emailAttachments()
         );
 
         DocumentDto generated = documentService.generateAndSave(effectiveReq);
