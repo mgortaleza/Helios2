@@ -32,22 +32,29 @@ SENDER_DISPLAY_NAME = os.getenv("HELIOS_SENDER_NAME", "Helios Underwriting Team"
 # Target output directory (Directly into the Helios apptst inbox UNC path)
 TARGET_DIR = os.getenv("HELIOS_INBOX_DIR", r"\\apptst\inbox")
 
-# Log & Status directory for HeliosAdmin diagnostics bridge
-LOG_DIR = os.getenv("HELIOS_LOG_DIR", r"C:\helios-storage\logs")
+# Primary and fallback log directories for HeliosAdmin telemetry bridge
+LOG_DIR = os.getenv("HELIOS_LOG_DIR", r"\\apptst\logs" if os.path.exists(r"\\apptst\logs") else r"C:\helios-storage\logs")
 
 
 def write_status(log_dir: str, status_data: dict) -> None:
     """
-    Writes telemetry and heartbeat JSON to the Helios storage log folder
-    so the HeliosAdmin diagnostic page can display real-time service health.
+    Writes telemetry and heartbeat JSON to both the primary log folder
+    and the centralized \\apptst\logs network share so the HeliosAdmin
+    diagnostic page can display real-time service health across hosts.
     """
-    try:
-        os.makedirs(log_dir, exist_ok=True)
-        status_path = os.path.join(log_dir, "gmailcap_status.json")
-        with open(status_path, "w", encoding="utf-8") as f:
-            json.dump(status_data, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Could not write heartbeat file to {log_dir}: {e}")
+    destinations = [log_dir, r"\\apptst\logs", r"C:\helios-storage\logs"]
+    seen = set()
+    for dest in destinations:
+        if not dest or dest in seen:
+            continue
+        seen.add(dest)
+        try:
+            os.makedirs(dest, exist_ok=True)
+            status_path = os.path.join(dest, "gmailcap_status.json")
+            with open(status_path, "w", encoding="utf-8") as f:
+                json.dump(status_data, f, indent=2)
+        except Exception as e:
+            pass
 
 
 def decode_mime_header(header_value: str | None) -> str:
