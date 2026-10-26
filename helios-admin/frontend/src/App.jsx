@@ -1985,6 +1985,8 @@ export default function App() {
                                             <Typography variant="body2" sx={{ fontSize: '0.82rem', color: '#334155' }}>
                                               Target: <code>{data.targetInbox || 'C:\\helios-storage\\documents\\tenant_1\\inbox'}</code>
                                               {data.emailsIngested != null && ` • ${data.emailsIngested} Emails Ingested`}
+                                              {data.autoRepliesSent != null && ` • ${data.autoRepliesSent} Auto-Replies`}
+                                              {data.autoReplyEnabled && ` • Auto-Reply: Active`}
                                               {data.lastRun && ` • Last Poll: ${data.lastRun}`}
                                             </Typography>
                                             {data.statusFile && (
