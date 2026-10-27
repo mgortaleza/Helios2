@@ -7863,7 +7863,7 @@ const DiagnosticsView = ({
 };
 
 // --- Enterprise Login & Multi-Tenant Authentication View ---
-const LoginView = ({ onLoginSuccess, tenants = [] }) => {
+const LoginView = ({ onLoginSuccess, tenants = [], inactivityMessage = null }) => {
   const [selectedTenantId, setSelectedTenantId] = useState(() => {
     try {
       const saved = localStorage.getItem('helios_selected_tenant_id');
@@ -8030,6 +8030,16 @@ const LoginView = ({ onLoginSuccess, tenants = [] }) => {
           <Typography variant="body2" sx={{ color: '#64748b', mb: 3 }}>
             Select your tenant directory and enter your account username.
           </Typography>
+
+          {inactivityMessage && (
+            <Alert
+              severity="warning"
+              icon={<Clock size={18} />}
+              sx={{ mb: 2.5, borderRadius: 1.5, fontSize: '0.85rem' }}
+            >
+              {inactivityMessage}
+            </Alert>
+          )}
 
           {error && (
             <Alert severity="error" sx={{ mb: 2.5, borderRadius: 1.5 }} onClose={() => setError(null)}>
@@ -8255,12 +8265,37 @@ const LoginView = ({ onLoginSuccess, tenants = [] }) => {
   );
 };
 
+// 15-Minute Inactivity Threshold
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
 // --- Main Application Shell (Matches Uploaded Design Screenshot + Per-Tenant & Per-Role UI Customization) ---
 export default function App() {
+  const [sessionNotice, setSessionNotice] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('helios_auth_user');
+      const lastActive = localStorage.getItem('helios_last_active');
+      if (savedUser && lastActive && Date.now() - Number(lastActive) > INACTIVITY_TIMEOUT_MS) {
+        localStorage.removeItem('helios_auth_user');
+        localStorage.removeItem('helios_last_active');
+        return 'Your previous session expired after 15 minutes of inactivity. Please sign in again.';
+      }
+    } catch {}
+    return null;
+  });
+
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('helios_auth_user');
-      return saved ? JSON.parse(saved) : null;
+      const lastActive = localStorage.getItem('helios_last_active');
+      if (saved) {
+        if (lastActive && Date.now() - Number(lastActive) > INACTIVITY_TIMEOUT_MS) {
+          localStorage.removeItem('helios_auth_user');
+          localStorage.removeItem('helios_last_active');
+          return null;
+        }
+        return JSON.parse(saved);
+      }
+      return null;
     } catch {
       return null;
     }
@@ -8333,27 +8368,100 @@ export default function App() {
     const userWithTenant = { ...user, tenantId: Number(tenantId) };
     setCurrentUser(userWithTenant);
     setActiveTenantId(Number(tenantId));
+    setSessionNotice(null);
     if (user.roleCode) {
       setActiveRoleCode(user.roleCode);
     }
     try {
       localStorage.setItem('helios_auth_user', JSON.stringify(userWithTenant));
       localStorage.setItem('helios_selected_tenant_id', String(tenantId));
+      localStorage.setItem('helios_last_active', String(Date.now()));
     } catch {}
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async (reason = null) => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     } catch {}
     setCurrentUser(null);
     setActiveTenantId(1);
+    if (reason) {
+      setSessionNotice(reason);
+    }
     try {
       localStorage.removeItem('helios_auth_user');
+      localStorage.removeItem('helios_last_active');
       localStorage.removeItem('helios_selected_tenant_id');
       sessionStorage.clear();
     } catch {}
-  };
+  }, []);
+
+  // 15-Minute Inactivity Auto-Logout Tracker
+  useEffect(() => {
+    if (!currentUser) return;
+
+    if (!localStorage.getItem('helios_last_active')) {
+      localStorage.setItem('helios_last_active', String(Date.now()));
+    }
+
+    let lastRecorded = Date.now();
+    const recordActivity = () => {
+      const now = Date.now();
+      if (now - lastRecorded > 5000) {
+        lastRecorded = now;
+        try {
+          localStorage.setItem('helios_last_active', String(now));
+        } catch {}
+      }
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, recordActivity, { passive: true });
+    });
+
+    const intervalId = setInterval(() => {
+      try {
+        const lastActiveStr = localStorage.getItem('helios_last_active');
+        const lastActive = lastActiveStr ? Number(lastActiveStr) : lastRecorded;
+        if (Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS) {
+          handleLogout('You have been logged out due to 15 minutes of inactivity.');
+        }
+      } catch {}
+    }, 15000);
+
+    const handleStorageChange = (e) => {
+      if (e.key === 'helios_auth_user' && !e.newValue) {
+        handleLogout();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, recordActivity);
+      });
+      clearInterval(intervalId);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [currentUser, handleLogout]);
+
+  // Synchronize with backend session on startup
+  useEffect(() => {
+    if (!currentUser) return;
+    let isCurrent = true;
+    fetch('/api/auth/session')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isCurrent && data && data.authenticated === false) {
+          handleLogout('Your server session has expired. Please sign in again.');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isCurrent = false;
+    };
+  }, [currentUser, handleLogout]);
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -8367,14 +8475,14 @@ export default function App() {
       const response = await fetch(path, { ...options, headers });
       if (!response.ok) {
         if (response.status === 401) {
-          handleLogout();
+          handleLogout('Your session has expired. Please sign in again.');
         }
         const errText = await response.text();
         throw new Error(errText || `HTTP ${response.status}`);
       }
       return response.json();
     },
-    [currentUser?.tenantId, activeTenantId]
+    [currentUser?.tenantId, activeTenantId, handleLogout]
   );
 
   const reloadTenants = useCallback(async () => {
@@ -8553,7 +8661,11 @@ export default function App() {
     return (
       <ThemeProvider theme={buildTenantTheme('#013a12', '#f59e0b')}>
         <CssBaseline />
-        <LoginView onLoginSuccess={handleLoginSuccess} tenants={tenants} />
+        <LoginView
+          onLoginSuccess={handleLoginSuccess}
+          tenants={tenants}
+          inactivityMessage={sessionNotice}
+        />
       </ThemeProvider>
     );
   }
