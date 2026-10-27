@@ -18,6 +18,11 @@ public record DocumentTemplateDto(
         String endorsementNbr,
         String endorsementTitle,
         Integer quoteId,
+        String relativePath,
+        Long fileSizeBytes,
+        String sha256Checksum,
+        String formNumber,
+        String editionDate,
+        String approvalStatus,
         List<TemplateFieldDto> fields
 ) {}
-

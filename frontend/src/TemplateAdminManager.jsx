@@ -436,6 +436,32 @@ export default function TemplateAdminManager({ apiFetch, selectedTenantId }) {
                     File: <strong>{selectedTemplate.fileName}</strong> | Endorsement:{' '}
                     <strong>{selectedTemplate.endorsementTitle || 'None assigned'}</strong>
                   </Typography>
+                  {selectedTemplate.relativePath && (
+                    <Box sx={{ mt: 1, p: 1.2, bgcolor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
+                      <Typography variant="caption" sx={{ color: '#475569' }}>
+                        <strong>Storage Path:</strong> <code>{selectedTemplate.relativePath}</code>
+                      </Typography>
+                      {selectedTemplate.fileSizeBytes > 0 && (
+                        <Typography variant="caption" sx={{ color: '#475569' }}>
+                          <strong>Size:</strong> {(selectedTemplate.fileSizeBytes / 1024).toFixed(1)} KB
+                        </Typography>
+                      )}
+                      {selectedTemplate.sha256Checksum && (
+                        <Typography variant="caption" sx={{ color: '#475569', fontFamily: 'monospace' }} title={selectedTemplate.sha256Checksum}>
+                          <strong>SHA-256:</strong> {selectedTemplate.sha256Checksum.substring(0, 16)}...
+                        </Typography>
+                      )}
+                      {selectedTemplate.approvalStatus && (
+                        <Chip
+                          label={selectedTemplate.approvalStatus}
+                          size="small"
+                          color="success"
+                          variant="outlined"
+                          sx={{ height: 18, fontSize: '0.65rem', fontWeight: 700 }}
+                        />
+                      )}
+                    </Box>
+                  )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <Button

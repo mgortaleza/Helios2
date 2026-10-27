@@ -29,6 +29,7 @@ import com.aspose.words.net.System.Data.DataRow;
 import com.aspose.words.net.System.Data.DataTable;
 import com.example.heliosdocument.model.DocumentTemplateDto;
 import com.example.heliosdocument.model.TemplateFieldDto;
+import com.example.heliosdocument.storage.StorageService;
 
 @Service
 public class TemplateRenderService {
@@ -37,10 +38,16 @@ public class TemplateRenderService {
 
     private final TemplateIngestionService ingestionService;
     private final DocumentService documentService;
+    private final StorageService storageService;
 
-    public TemplateRenderService(TemplateIngestionService ingestionService, DocumentService documentService) {
+    public TemplateRenderService(
+            TemplateIngestionService ingestionService,
+            DocumentService documentService,
+            StorageService storageService
+    ) {
         this.ingestionService = ingestionService;
         this.documentService = documentService;
+        this.storageService = storageService;
     }
 
     private JdbcTemplate getJdbc(int tenantId) {
@@ -66,7 +73,12 @@ public class TemplateRenderService {
         log.info("Rendering PDF for templateId: {}, entityId: {}, entityType: {}", templateId, targetEntityId, targetEntityType);
 
         DocumentTemplateDto template = ingestionService.getTemplateById(tenantId, templateId);
-        byte[] docxBytes = ingestionService.getRawTemplateData(tenantId, templateId);
+        byte[] docxBytes;
+        if (template.relativePath() != null && !template.relativePath().isBlank() && storageService.exists(template.relativePath())) {
+            docxBytes = storageService.loadAsBytes(template.relativePath());
+        } else {
+            docxBytes = ingestionService.getRawTemplateData(tenantId, templateId);
+        }
 
         Document doc = new Document(new ByteArrayInputStream(docxBytes));
 

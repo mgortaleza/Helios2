@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -35,22 +36,35 @@ import com.aspose.words.SaveFormat;
 import com.example.heliosdocument.model.DocumentTemplateDto;
 import com.example.heliosdocument.model.TemplateFieldDto;
 import com.example.heliosdocument.model.UpdateFieldMappingsRequest;
+import com.example.heliosdocument.storage.StorageService;
+import com.example.heliosdocument.storage.StoredFileMetadata;
 
 @Service
 public class TemplateIngestionService {
 
     private static final Logger log = LoggerFactory.getLogger(TemplateIngestionService.class);
+
     private final DocumentService documentService;
+    private final StorageService storageService;
 
     // Pattern for legacy mustache tags {{field_name}} or table markers {{#table}} and {{/table}}
     private static final Pattern TAG_PATTERN = Pattern.compile("\\{\\{([#\\/]?\\s*[a-zA-Z0-9_\\.]+)\\s*\\}\\}");
 
-    public TemplateIngestionService(DocumentService documentService) {
+    public TemplateIngestionService(DocumentService documentService, StorageService storageService) {
         this.documentService = documentService;
+        this.storageService = storageService;
     }
 
     private JdbcTemplate getJdbc(int tenantId) {
         return documentService.getTenantJdbcTemplate(tenantId);
+    }
+
+    public String resolveTenantCode(int tenantId) {
+        return switch (tenantId) {
+            case 2 -> "HELIOS_TST";
+            case 3 -> "HELIOS3_TST";
+            default -> "HELIOS2_TST";
+        };
     }
 
     /**
@@ -58,7 +72,9 @@ public class TemplateIngestionService {
      * 1. Loads doc via Aspose.Words
      * 2. Migrates {{tag}} legacy text tags to proper MERGEFIELD entities
      * 3. Extracts merge fields in the EXACT sequential order they appear in the document
-     * 4. Persists the template metadata, sanitized DOCX binary, and template fields with field_order
+     * 4. Streams the sanitized DOCX to physical storage via StorageService (local or Windows UNC share)
+     * 5. Persists template metadata and RELATIVE PATH in SQL Server (FILE_DATA set to NULL)
+     * 6. Saves extracted field mappings
      */
     public DocumentTemplateDto ingestTemplate(
             int tenantId,
@@ -68,7 +84,7 @@ public class TemplateIngestionService {
             String description,
             byte[] rawDocxBytes
     ) throws Exception {
-        log.info("Ingesting template '{}' (fileName: {}) for endorsementId: {}", templateName, fileName, endorsementId);
+        log.info("Ingesting template '{}' (fileName: {}) for tenant #{}", templateName, fileName, tenantId);
 
         // 1. Load document with Aspose.Words
         Document doc;
@@ -127,12 +143,25 @@ public class TemplateIngestionService {
             migratedBytes = out.toByteArray();
         }
 
-        // 5. Store template in DB
+        // 5. Stream binary to filesystem / UNC share via StorageService
+        String tenantCode = resolveTenantCode(tenantId);
+        StoredFileMetadata fileMeta = storageService.store(tenantId, tenantCode, "templates", fileName, migratedBytes);
+
+        String formNumber = deriveFormNumber(templateName, fileName);
+        String editionDate = String.format("%04d-%02d", LocalDate.now().getYear(), LocalDate.now().getMonthValue());
+        String approvalStatus = "APPROVED";
+
+        // 6. Store template in DB (Persist RELATIVE_PATH, eliminate BLOB)
         JdbcTemplate jdbc = getJdbc(tenantId);
+
+        // Ensure new columns exist on tenant table dynamically
+        ensureStorageColumnsExist(jdbc);
+
         String insertTemplateSql = """
             INSERT INTO dbo.DOCUMENT_TEMPLATES 
-            (ENDORSEMENT_ID, TEMPLATE_NAME, FILE_NAME, MIME_TYPE, FILE_DATA, DESCRIPTION, VERSION, IS_ACTIVE, CREATED_BY, CREATED_AT, UPDATED_AT)
-            VALUES (?, ?, ?, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ?, ?, 1, 1, 'ADMIN', GETDATE(), GETDATE())
+            (ENDORSEMENT_ID, TEMPLATE_NAME, FILE_NAME, MIME_TYPE, RELATIVE_PATH, FILE_SIZE_BYTES, SHA256_CHECKSUM,
+             FORM_NUMBER, EDITION_DATE, APPROVAL_STATUS, FILE_DATA, DESCRIPTION, VERSION, IS_ACTIVE, CREATED_BY, CREATED_AT, UPDATED_AT)
+            VALUES (?, ?, ?, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ?, ?, ?, ?, ?, ?, NULL, ?, 1, 1, 'ADMIN', GETDATE(), GETDATE())
         """;
 
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -145,90 +174,139 @@ public class TemplateIngestionService {
             }
             ps.setString(2, templateName);
             ps.setString(3, fileName != null ? fileName : "template.docx");
-            ps.setBytes(4, migratedBytes);
-            ps.setString(5, description != null ? description : "Word Document Template for Endorsements");
+            ps.setString(4, fileMeta.relativePath());
+            ps.setLong(5, fileMeta.fileSizeBytes());
+            ps.setString(6, fileMeta.sha256Checksum());
+            ps.setString(7, formNumber);
+            ps.setString(8, editionDate);
+            ps.setString(9, approvalStatus);
+            ps.setString(10, description != null ? description : "Word Document Template for Endorsements");
             return ps;
         }, keyHolder);
 
         Number generatedKey = keyHolder.getKey();
-        if (generatedKey == null) {
-            throw new IllegalStateException("Failed to retrieve generated TEMPLATE_ID from database.");
-        }
-        int templateId = generatedKey.intValue();
-        log.info("Persisted DOCUMENT_TEMPLATES record ID: {} with {} fields", templateId, extractedList.size());
+        int templateId = (generatedKey != null) ? generatedKey.intValue() : 0;
+        log.info("Created DOCUMENT_TEMPLATES record ID: {} with relativePath: '{}'", templateId, fileMeta.relativePath());
 
-        // 6. Store fields in TEMPLATE_FIELDS table with sequential FIELD_ORDER
+        // 7. Synchronize to mstr.form_inventory if present
+        syncToMstrFormInventory(jdbc, formNumber, templateName, editionDate, fileMeta);
+
+        // 8. Insert discovered fields with exact field_order sequence
+        ensureFieldOrderColumn(jdbc);
+
         String insertFieldSql = """
             INSERT INTO dbo.TEMPLATE_FIELDS 
             (TEMPLATE_ID, FIELD_NAME, IS_TABLE_REGION, DATA_MAPPING_PATH, SAMPLE_PREVIEW_VALUE, FIELD_ORDER, CREATED_AT, UPDATED_AT)
             VALUES (?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
         """;
 
-        int order = 1;
+        List<TemplateFieldDto> createdFields = new ArrayList<>();
+        int orderIndex = 1;
         for (ExtractedField ef : extractedList) {
-            String defaultMapping = deriveDefaultMapping(ef.name());
-            String sampleVal = deriveSampleValue(ef.name());
-            jdbc.update(insertFieldSql, templateId, ef.name(), ef.isTable() ? 1 : 0, defaultMapping, sampleVal, order++);
+            String defaultPath = deriveDefaultMapping(ef.name);
+            String sampleVal = deriveSampleValue(ef.name);
+
+            final int fOrder = orderIndex++;
+            jdbc.update(insertFieldSql, templateId, ef.name, ef.isTable ? 1 : 0, defaultPath, sampleVal, fOrder);
+
+            createdFields.add(new TemplateFieldDto(
+                    null,
+                    templateId,
+                    ef.name,
+                    ef.isTable,
+                    defaultPath,
+                    sampleVal,
+                    LocalDateTime.now(),
+                    LocalDateTime.now()
+            ));
         }
 
-        return getTemplateById(tenantId, templateId);
+        return new DocumentTemplateDto(
+                templateId,
+                endorsementId,
+                templateName,
+                fileName,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                description,
+                1,
+                true,
+                "ADMIN",
+                LocalDateTime.now(),
+                LocalDateTime.now(),
+                null,
+                null,
+                null,
+                fileMeta.relativePath(),
+                fileMeta.fileSizeBytes(),
+                fileMeta.sha256Checksum(),
+                formNumber,
+                editionDate,
+                approvalStatus,
+                createdFields
+        );
     }
 
-    private String extractMergeFieldName(String fieldCode) {
-        // e.g. "MERGEFIELD endorsement_nbr \* MERGEFORMAT"
-        String trimmed = fieldCode.trim();
-        if (trimmed.toUpperCase().startsWith("MERGEFIELD")) {
-            trimmed = trimmed.substring("MERGEFIELD".length()).trim();
+    private void ensureStorageColumnsExist(JdbcTemplate jdbc) {
+        try {
+            String ddl = """
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'RELATIVE_PATH')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD RELATIVE_PATH VARCHAR(500) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'FILE_SIZE_BYTES')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD FILE_SIZE_BYTES BIGINT NULL DEFAULT 0;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'SHA256_CHECKSUM')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD SHA256_CHECKSUM VARCHAR(64) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'FORM_NUMBER')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD FORM_NUMBER VARCHAR(100) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'EDITION_DATE')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD EDITION_DATE VARCHAR(20) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.DOCUMENT_TEMPLATES') AND name = 'APPROVAL_STATUS')
+                    ALTER TABLE dbo.DOCUMENT_TEMPLATES ADD APPROVAL_STATUS VARCHAR(50) NOT NULL CONSTRAINT DF_doc_tmp_appr DEFAULT 'APPROVED';
+                ALTER TABLE dbo.DOCUMENT_TEMPLATES ALTER COLUMN FILE_DATA VARBINARY(MAX) NULL;
+            """;
+            jdbc.execute(ddl);
+        } catch (Exception e) {
+            log.debug("Storage columns check completed: {}", e.getMessage());
         }
-        int spaceIdx = trimmed.indexOf(' ');
-        int slashIdx = trimmed.indexOf('\\');
-        int endIdx = trimmed.length();
-        if (spaceIdx > 0 && spaceIdx < endIdx) endIdx = spaceIdx;
-        if (slashIdx > 0 && slashIdx < endIdx) endIdx = slashIdx;
-        return trimmed.substring(0, endIdx).replace("\"", "").trim();
     }
 
-    /**
-     * Replaces {{field}} and {{#table}}/{{/table}} with Aspose MS Word MERGEFIELDs
-     */
-    public void migrateLegacyTagsToMergeFields(Document doc) throws Exception {
+    private void syncToMstrFormInventory(JdbcTemplate jdbc, String formNumber, String templateName, String editionDate, StoredFileMetadata meta) {
+        try {
+            String sql = """
+                IF EXISTS (SELECT * FROM sys.tables WHERE name = 'form_inventory' AND schema_id = SCHEMA_ID('mstr'))
+                BEGIN
+                    MERGE INTO mstr.form_inventory AS target
+                    USING (SELECT ? AS FORM_NUMBER, ? AS EDITION_DATE) AS source
+                    ON target.FORM_NUMBER = source.FORM_NUMBER AND target.EDITION_DATE = source.EDITION_DATE
+                    WHEN MATCHED THEN
+                        UPDATE SET FORM_NAME = ?, RELATIVE_PATH = ?, FILE_SIZE_BYTES = ?, SHA256_CHECKSUM = ?, UPDATED_AT = GETDATE()
+                    WHEN NOT MATCHED THEN
+                        INSERT (FORM_NUMBER, FORM_NAME, EDITION_DATE, LINE_OF_BUSINESS, FORM_TYPE, RELATIVE_PATH, FILE_SIZE_BYTES, SHA256_CHECKSUM, IS_MANDATORY, STATUS, EFFECTIVE_DATE, CREATED_AT, UPDATED_AT)
+                        VALUES (source.FORM_NUMBER, ?, source.EDITION_DATE, 'COMMERCIAL_PROPERTY', 'ENDORSEMENT', ?, ?, ?, 0, 'APPROVED', CAST(GETDATE() AS DATE), GETDATE(), GETDATE());
+                END
+            """;
+            jdbc.update(sql, formNumber, editionDate, templateName, meta.relativePath(), meta.fileSizeBytes(), meta.sha256Checksum(),
+                    templateName, meta.relativePath(), meta.fileSizeBytes(), meta.sha256Checksum());
+        } catch (Exception e) {
+            log.debug("mstr.form_inventory sync skipped: {}", e.getMessage());
+        }
+    }
+
+    private void ensureFieldOrderColumn(JdbcTemplate jdbc) {
+        try {
+            String checkColSql = """
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.TEMPLATE_FIELDS') AND name = 'FIELD_ORDER')
+                BEGIN
+                    ALTER TABLE dbo.TEMPLATE_FIELDS ADD FIELD_ORDER INT NOT NULL DEFAULT 1;
+                END
+            """;
+            jdbc.execute(checkColSql);
+        } catch (Exception ignored) {}
+    }
+
+    private void migrateLegacyTagsToMergeFields(Document doc) throws Exception {
         FindReplaceOptions options = new FindReplaceOptions();
-        options.setReplacingCallback(new MustacheToMergeFieldReplacingCallback(doc));
+        options.setReplacingCallback(new MustacheToMergeFieldCallback(doc));
         doc.getRange().replace(TAG_PATTERN, "", options);
-    }
-
-    /**
-     * IReplacingCallback implementation to replace {{tag}} with Word MERGEFIELD entities
-     */
-    private static class MustacheToMergeFieldReplacingCallback implements IReplacingCallback {
-        private final Document doc;
-
-        public MustacheToMergeFieldReplacingCallback(Document doc) {
-            this.doc = doc;
-        }
-
-        @Override
-        public int replacing(ReplacingArgs args) throws Exception {
-            Node matchNode = args.getMatchNode();
-            DocumentBuilder builder = new DocumentBuilder(doc);
-            builder.moveTo(matchNode);
-
-            String fullMatch = args.getMatch().group(0);
-            Matcher matcher = TAG_PATTERN.matcher(fullMatch);
-            if (matcher.find()) {
-                String rawTag = matcher.group(1).trim();
-                String fieldName;
-                if (rawTag.startsWith("#")) {
-                    fieldName = "TableStart:" + rawTag.substring(1).trim();
-                } else if (rawTag.startsWith("/")) {
-                    fieldName = "TableEnd:" + rawTag.substring(1).trim();
-                } else {
-                    fieldName = rawTag;
-                }
-                builder.insertField("MERGEFIELD " + fieldName + " \\* MERGEFORMAT", "«" + fieldName + "»");
-            }
-            return ReplaceAction.REPLACE;
-        }
     }
 
     public DocumentTemplateDto getTemplateById(int tenantId, int templateId) {
@@ -236,6 +314,7 @@ public class TemplateIngestionService {
         String sql = """
             SELECT t.TEMPLATE_ID, t.ENDORSEMENT_ID, t.TEMPLATE_NAME, t.FILE_NAME, t.MIME_TYPE, 
                    t.DESCRIPTION, t.VERSION, t.IS_ACTIVE, t.CREATED_BY, t.CREATED_AT, t.UPDATED_AT,
+                   t.RELATIVE_PATH, t.FILE_SIZE_BYTES, t.SHA256_CHECKSUM, t.FORM_NUMBER, t.EDITION_DATE, t.APPROVAL_STATUS,
                    e.ENDORSEMENT_NBR, e.ENDORSEMENT_TITLE, e.QUOTE_ID
             FROM dbo.DOCUMENT_TEMPLATES t
             LEFT JOIN dbo.UW_ENDORSEMENT e ON t.ENDORSEMENT_ID = e.ENDORSEMENT_ID
@@ -247,6 +326,8 @@ public class TemplateIngestionService {
             if (rs.wasNull()) endId = null;
             Integer qId = rs.getInt("QUOTE_ID");
             if (rs.wasNull()) qId = null;
+            long size = rs.getLong("FILE_SIZE_BYTES");
+            if (rs.wasNull()) size = 0L;
 
             return new DocumentTemplateDto(
                     rs.getInt("TEMPLATE_ID"),
@@ -263,6 +344,12 @@ public class TemplateIngestionService {
                     rs.getString("ENDORSEMENT_NBR"),
                     rs.getString("ENDORSEMENT_TITLE"),
                     qId,
+                    rs.getString("RELATIVE_PATH"),
+                    size,
+                    rs.getString("SHA256_CHECKSUM"),
+                    rs.getString("FORM_NUMBER"),
+                    rs.getString("EDITION_DATE"),
+                    rs.getString("APPROVAL_STATUS"),
                     getFieldsForTemplate(tenantId, templateId)
             );
         }, templateId);
@@ -278,6 +365,7 @@ public class TemplateIngestionService {
         String sql = """
             SELECT t.TEMPLATE_ID, t.ENDORSEMENT_ID, t.TEMPLATE_NAME, t.FILE_NAME, t.MIME_TYPE, 
                    t.DESCRIPTION, t.VERSION, t.IS_ACTIVE, t.CREATED_BY, t.CREATED_AT, t.UPDATED_AT,
+                   t.RELATIVE_PATH, t.FILE_SIZE_BYTES, t.SHA256_CHECKSUM, t.FORM_NUMBER, t.EDITION_DATE, t.APPROVAL_STATUS,
                    e.ENDORSEMENT_NBR, e.ENDORSEMENT_TITLE, e.QUOTE_ID
             FROM dbo.DOCUMENT_TEMPLATES t
             LEFT JOIN dbo.UW_ENDORSEMENT e ON t.ENDORSEMENT_ID = e.ENDORSEMENT_ID
@@ -290,6 +378,8 @@ public class TemplateIngestionService {
             if (rs.wasNull()) endId = null;
             Integer qId = rs.getInt("QUOTE_ID");
             if (rs.wasNull()) qId = null;
+            long size = rs.getLong("FILE_SIZE_BYTES");
+            if (rs.wasNull()) size = 0L;
 
             return new DocumentTemplateDto(
                     tid,
@@ -306,6 +396,12 @@ public class TemplateIngestionService {
                     rs.getString("ENDORSEMENT_NBR"),
                     rs.getString("ENDORSEMENT_TITLE"),
                     qId,
+                    rs.getString("RELATIVE_PATH"),
+                    size,
+                    rs.getString("SHA256_CHECKSUM"),
+                    rs.getString("FORM_NUMBER"),
+                    rs.getString("EDITION_DATE"),
+                    rs.getString("APPROVAL_STATUS"),
                     getFieldsForTemplate(tenantId, tid)
             );
         });
@@ -348,10 +444,25 @@ public class TemplateIngestionService {
         log.info("Updated {} field mappings for template ID {}", request.mappings().size(), templateId);
     }
 
+    /**
+     * Resolves raw template bytes:
+     * 1. If RELATIVE_PATH is present and file exists on physical storage, loads from StorageService
+     * 2. Fallback to legacy database BLOB (FILE_DATA) for backward compatibility
+     */
     public byte[] getRawTemplateData(int tenantId, int templateId) {
         JdbcTemplate jdbc = getJdbc(tenantId);
-        String sql = "SELECT FILE_DATA FROM dbo.DOCUMENT_TEMPLATES WHERE TEMPLATE_ID = ?";
-        return jdbc.queryForObject(sql, byte[].class, templateId);
+        String sql = "SELECT RELATIVE_PATH, FILE_DATA FROM dbo.DOCUMENT_TEMPLATES WHERE TEMPLATE_ID = ?";
+        return jdbc.queryForObject(sql, (rs, rowNum) -> {
+            String relPath = rs.getString("RELATIVE_PATH");
+            if (relPath != null && !relPath.isBlank() && storageService.exists(relPath)) {
+                return storageService.loadAsBytes(relPath);
+            }
+            byte[] blob = rs.getBytes("FILE_DATA");
+            if (blob != null && blob.length > 0) {
+                return blob;
+            }
+            throw new IllegalStateException("Template #" + templateId + " physical binary file not found at " + relPath);
+        }, templateId);
     }
 
     public List<Map<String, Object>> listEndorsements(int tenantId) {
@@ -366,35 +477,124 @@ public class TemplateIngestionService {
         return jdbc.queryForList(sql);
     }
 
+    private String deriveFormNumber(String name, String filename) {
+        String base = (name != null && !name.isBlank()) ? name : filename;
+        if (base == null) return "IL-00-17";
+        return base.replaceAll("[^a-zA-Z0-9-]", "_").toUpperCase();
+    }
+
     private String deriveDefaultMapping(String name) {
         String n = name.toLowerCase();
-        if (n.contains("quote_nbr") || n.contains("quotenbr")) return "quote.QUOTE_NBR";
-        if (n.contains("premium") && !n.contains("delta")) return "quote.PREMIUM";
-        if (n.contains("premium_delta") || n.contains("endorsement_premium")) return "endorsement.PREMIUM_DELTA";
-        if (n.contains("endorsement_nbr")) return "endorsement.ENDORSEMENT_NBR";
-        if (n.contains("endorsement_title") || n.contains("title")) return "endorsement.ENDORSEMENT_TITLE";
-        if (n.contains("insured") || n.contains("insured_name") || n.contains("customer")) return "party.LEGAL_NAME";
-        if (n.contains("policy_nbr") || n.contains("policynbr")) return "policy.POLICY_NBR";
-        if (n.contains("state")) return "quote.STATE_CODE";
-        if (n.contains("limit")) return "quote.LIMIT_AMT";
-        if (n.contains("retention") || n.contains("deductible")) return "quote.RETENTION_AMT";
-        if (n.contains("date") || n.contains("effective")) return "endorsement.EFFECTIVE_DATE";
-        if (n.contains("description")) return "endorsement.DESCRIPTION";
-        return "";
+        if (n.contains("endorsement_nbr") || n.contains("endorsementnumber") || n.equals("formnumber")) {
+            return "endorsement.ENDORSEMENT_NBR";
+        }
+        if (n.contains("endorsement_title") || n.contains("formname") || n.contains("title")) {
+            return "endorsement.ENDORSEMENT_TITLE";
+        }
+        if (n.contains("effective_date") || n.contains("effectivedate")) {
+            return "endorsement.EFFECTIVE_DATE";
+        }
+        if (n.contains("premium_delta") || n.contains("endorsementpremium") || n.contains("delta")) {
+            return "endorsement.PREMIUM_DELTA";
+        }
+        if (n.contains("description") || n.contains("endorsement_desc")) {
+            return "endorsement.DESCRIPTION";
+        }
+        if (n.contains("quote_nbr") || n.contains("quotenumber") || n.contains("policy_number")) {
+            return "quote.QUOTE_NBR";
+        }
+        if (n.contains("quote_premium") || n.contains("total_premium") || n.contains("premium")) {
+            return "quote.PREMIUM";
+        }
+        if (n.contains("named_insured") || n.contains("legal_name") || n.contains("insured")) {
+            return "party.LEGAL_NAME";
+        }
+        if (n.contains("fein") || n.contains("tax_id")) {
+            return "party.FEIN";
+        }
+        if (n.contains("state_code") || n.contains("state")) {
+            return "quote.STATE_CODE";
+        }
+        if (n.contains("limit") || n.contains("coverage_limit")) {
+            return "quote.LIMIT_AMT";
+        }
+        if (n.contains("retention") || n.contains("deductible")) {
+            return "quote.RETENTION_AMT";
+        }
+        if (n.contains("product_code") || n.contains("lob")) {
+            return "quote.PRODUCT_CODE";
+        }
+        return "custom";
     }
 
     private String deriveSampleValue(String name) {
         String n = name.toLowerCase();
-        if (n.contains("quote")) return "Q-2026-8841";
-        if (n.contains("premium") && !n.contains("delta")) return "$1,200.00";
-        if (n.contains("delta")) return "+$150.00";
-        if (n.contains("endorsement_nbr")) return "END-001-ADD-INS";
-        if (n.contains("insured")) return "Apex Global Logistics LLC";
-        if (n.contains("state")) return "CA";
-        if (n.contains("limit")) return "$2,000,000";
-        if (n.contains("date")) return "2026-10-26";
+        if (n.contains("nbr") || n.contains("number")) return "END-2026-0042";
+        if (n.contains("date")) return "2026-10-27";
+        if (n.contains("premium") || n.contains("delta") || n.contains("amount") || n.contains("amt")) return "$1,250.00";
+        if (n.contains("name") || n.contains("insured")) return "Acme Logistics Holdings LLC";
+        if (n.contains("state")) return "IL";
+        if (n.contains("fein")) return "36-1234567";
+        if (n.contains("limit")) return "$1,000,000";
+        if (n.contains("deductible") || n.contains("retention")) return "$5,000";
         return "Sample " + name;
     }
 
+    private static String extractMergeFieldName(String fieldCode) {
+        if (fieldCode == null) return null;
+        String trimmed = fieldCode.trim();
+        if (trimmed.toUpperCase().startsWith("MERGEFIELD")) {
+            String remainder = trimmed.substring("MERGEFIELD".length()).trim();
+            if (remainder.startsWith("\"") && remainder.length() > 1) {
+                int nextQuote = remainder.indexOf('"', 1);
+                if (nextQuote != -1) {
+                    return remainder.substring(1, nextQuote);
+                }
+            }
+            int firstSpace = remainder.indexOf(' ');
+            if (firstSpace != -1) {
+                return remainder.substring(0, firstSpace);
+            }
+            return remainder;
+        }
+        return trimmed;
+    }
+
     private record ExtractedField(String name, boolean isTable) {}
+
+    private static class MustacheToMergeFieldCallback implements IReplacingCallback {
+        private final Document doc;
+        private final DocumentBuilder builder;
+
+        public MustacheToMergeFieldCallback(Document doc) {
+            this.doc = doc;
+            this.builder = new DocumentBuilder(doc);
+        }
+
+        @Override
+        public int replacing(ReplacingArgs args) throws Exception {
+            Node matchNode = args.getMatchNode();
+            String fullTag = args.getMatch().group();
+            Matcher m = TAG_PATTERN.matcher(fullTag);
+            if (!m.find()) return ReplaceAction.SKIP;
+
+            String inner = m.group(1).trim();
+            String fieldName;
+
+            if (inner.startsWith("#")) {
+                String tableName = inner.substring(1).trim();
+                fieldName = "TableStart:" + tableName;
+            } else if (inner.startsWith("/")) {
+                String tableName = inner.substring(1).trim();
+                fieldName = "TableEnd:" + tableName;
+            } else {
+                fieldName = inner;
+            }
+
+            builder.moveTo(matchNode);
+            builder.insertField("MERGEFIELD \"" + fieldName + "\" \\* MERGEFORMAT", null);
+
+            return ReplaceAction.REPLACE;
+        }
+    }
 }

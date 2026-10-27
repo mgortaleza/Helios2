@@ -19,6 +19,7 @@ Copy-Item -Path "c:\DEV\helios2\helios-docgen\src\main\java\*" -Destination "$st
 Write-Host "Updating application.properties on target Tomcat instances..."
 Copy-Item -Path "c:\DEV\helios2\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\Tomcat11\webapps\helios2\WEB-INF\classes\application.properties" -Force
 Copy-Item -Path "c:\DEV\helios2\helios-admin\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\tomcat11-admin\webapps\helios-admin\WEB-INF\classes\application.properties" -Force
+Copy-Item -Path "c:\DEV\helios2\helios-document\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\Tomcat11-Document\webapps\helios-document\WEB-INF\classes\application.properties" -Force
 
 Write-Host "=== 2. Compiling on APPTST via Invoke-Command ==="
 Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
