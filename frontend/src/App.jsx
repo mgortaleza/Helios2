@@ -8372,11 +8372,14 @@ export default function App() {
   const [sessionNotice, setSessionNotice] = useState(() => {
     try {
       const savedUser = localStorage.getItem('helios_auth_user');
-      const lastActive = localStorage.getItem('helios_last_active');
-      if (savedUser && lastActive && Date.now() - Number(lastActive) > INACTIVITY_TIMEOUT_MS) {
-        localStorage.removeItem('helios_auth_user');
-        localStorage.removeItem('helios_last_active');
-        return 'Your previous session expired after 15 minutes of inactivity. Please sign in again.';
+      const lastActiveStr = localStorage.getItem('helios_last_active');
+      if (savedUser && lastActiveStr) {
+        const lastActive = Number(lastActiveStr);
+        if (!isNaN(lastActive) && lastActive > 0 && Date.now() - lastActive > INACTIVITY_TIMEOUT_MS) {
+          localStorage.removeItem('helios_auth_user');
+          localStorage.removeItem('helios_last_active');
+          return 'Your previous session expired after 15 minutes of inactivity. Please sign in again.';
+        }
       }
     } catch {}
     return null;
@@ -8385,16 +8388,17 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('helios_auth_user');
-      const lastActive = localStorage.getItem('helios_last_active');
-      if (saved) {
-        if (lastActive && Date.now() - Number(lastActive) > INACTIVITY_TIMEOUT_MS) {
+      if (!saved) return null;
+      const lastActiveStr = localStorage.getItem('helios_last_active');
+      if (lastActiveStr) {
+        const lastActive = Number(lastActiveStr);
+        if (!isNaN(lastActive) && lastActive > 0 && Date.now() - lastActive > INACTIVITY_TIMEOUT_MS) {
           localStorage.removeItem('helios_auth_user');
           localStorage.removeItem('helios_last_active');
           return null;
         }
-        return JSON.parse(saved);
       }
-      return null;
+      return JSON.parse(saved);
     } catch {
       return null;
     }
@@ -8499,9 +8503,13 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    if (!localStorage.getItem('helios_last_active')) {
-      localStorage.setItem('helios_last_active', String(Date.now()));
-    }
+    const initialNow = Date.now();
+    try {
+      const existing = Number(localStorage.getItem('helios_last_active'));
+      if (isNaN(existing) || existing <= 0) {
+        localStorage.setItem('helios_last_active', String(initialNow));
+      }
+    } catch {}
 
     let lastRecorded = Date.now();
     const recordActivity = () => {
@@ -8522,8 +8530,8 @@ export default function App() {
     const intervalId = setInterval(() => {
       try {
         const lastActiveStr = localStorage.getItem('helios_last_active');
-        const lastActive = lastActiveStr ? Number(lastActiveStr) : lastRecorded;
-        if (Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS) {
+        const lastActive = Number(lastActiveStr);
+        if (!isNaN(lastActive) && lastActive > 0 && Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS) {
           handleLogout('You have been logged out due to 15 minutes of inactivity.');
         }
       } catch {}
@@ -8542,23 +8550,6 @@ export default function App() {
       });
       clearInterval(intervalId);
       window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [currentUser, handleLogout]);
-
-  // Synchronize with backend session on startup
-  useEffect(() => {
-    if (!currentUser) return;
-    let isCurrent = true;
-    fetch('/api/auth/session')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (isCurrent && data && data.authenticated === false) {
-          handleLogout('Your server session has expired. Please sign in again.');
-        }
-      })
-      .catch(() => {});
-    return () => {
-      isCurrent = false;
     };
   }, [currentUser, handleLogout]);
 
