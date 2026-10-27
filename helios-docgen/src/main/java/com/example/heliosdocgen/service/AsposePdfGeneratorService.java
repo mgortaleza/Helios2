@@ -144,10 +144,10 @@ public class AsposePdfGeneratorService {
         addHeaderCell(lHeader, "Limit of Liability");
         addHeaderCell(lHeader, "Retention / Deductible");
 
-        addDataRow3(limitsTable, "Professional Liability / Errors & Omissions", safe(req.limitAmount(), "$5,000,000"), safe(req.retentionAmount(), "$50,000"));
+        addDataRow3(limitsTable, "Professional Liability / Errors & Omissions", formatCurrencyWhole(req.limitAmount(), "$5,000,000"), formatCurrencyWhole(req.retentionAmount(), "$50,000"));
         addDataRow3(limitsTable, "Regulatory Defense & Fines Sublimit", "$1,000,000", "$25,000");
-        addDataRow3(limitsTable, "Network Security & Privacy Liability", safe(req.limitAmount(), "$5,000,000"), safe(req.retentionAmount(), "$50,000"));
-        addDataRow3(limitsTable, "Annual Policy Aggregate Limit", safe(req.limitAmount(), "$5,000,000"), "N/A");
+        addDataRow3(limitsTable, "Network Security & Privacy Liability", formatCurrencyWhole(req.limitAmount(), "$5,000,000"), formatCurrencyWhole(req.retentionAmount(), "$50,000"));
+        addDataRow3(limitsTable, "Annual Policy Aggregate Limit", formatCurrencyWhole(req.limitAmount(), "$5,000,000"), "N/A");
         page.getParagraphs().add(limitsTable);
 
         // Premium Accounting
@@ -158,12 +158,20 @@ public class AsposePdfGeneratorService {
         premTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
         premTable.setMargin(new MarginInfo(0, 5, 0, 12));
 
-        addDataRow2(premTable, "Total Base Loss Cost & Rated Schedule Premium:", safe(req.premiumAmount(), "$32,500"));
-        addDataRow2(premTable, "State Surplus Lines / DOI Regulatory Taxes & Fees:", "$1,300");
+        double ratedPrem = parseDouble(req.premiumAmount(), 32500.0);
+        double surplusTax = Math.round(ratedPrem * 0.04 * 100.0) / 100.0;
+        double totalInvoiced = ratedPrem + surplusTax;
+
+        String ratedPremStr = formatCurrency(req.premiumAmount(), "$32,500.00");
+        String surplusTaxStr = String.format("$%,.2f", surplusTax);
+        String totalInvoicedStr = String.format("$%,.2f", totalInvoiced);
+
+        addDataRow2(premTable, "Total Base Loss Cost & Rated Schedule Premium:", ratedPremStr);
+        addDataRow2(premTable, "State Surplus Lines / DOI Regulatory Taxes & Fees (4.0%):", surplusTaxStr);
 
         Row totRow = premTable.getRows().add();
         addStyledCell(totRow, "TOTAL INVOICED ANNUAL PREMIUM (DUE AT INCEPTION):", true, 9, Color.getBlack(), rgb(241, 245, 249));
-        addStyledCell(totRow, safe(req.premiumAmount(), "$32,500"), true, 9.5f, rgb(2, 132, 199), rgb(241, 245, 249));
+        addStyledCell(totRow, totalInvoicedStr, true, 9.5f, rgb(2, 132, 199), rgb(241, 245, 249));
         page.getParagraphs().add(premTable);
 
         // Forms & Endorsements Schedule
@@ -211,7 +219,11 @@ public class AsposePdfGeneratorService {
         sumTable.setDefaultCellPadding(new MarginInfo(5, 5, 5, 5));
         sumTable.setMargin(new MarginInfo(0, 10, 0, 15));
 
-        addMetaRow(sumTable, "Quote / Submsn #:", "SUB-" + safe(req.entityNbr(), "9921"), "Proposal Date:", LocalDate.now().toString());
+                String entityRef = safe(req.entityNbr(), "9921");
+        if (!entityRef.startsWith("SUB-") && !entityRef.startsWith("POL-") && !entityRef.startsWith("Q-")) {
+            entityRef = "SUB-" + entityRef;
+        }
+        addMetaRow(sumTable, "Quote / Submsn #:", entityRef, "Proposal Date:", LocalDate.now().toString());
         addMetaRow(sumTable, "Applicant:", safe(req.insuredName(), "TechSolutions Corp"), "Broker Agency:", safe(req.agencyInfo(), "Acme Brokers"));
         addMetaRow(sumTable, "Proposed Term:", safe(req.effectiveDate(), "2026-10-01") + " to " + safe(req.expirationDate(), "2027-10-01"), "Quote Valid Until:", LocalDate.now().plusDays(30).toString());
         page.getParagraphs().add(sumTable);
@@ -225,15 +237,16 @@ public class AsposePdfGeneratorService {
         rateTable.setMargin(new MarginInfo(0, 5, 0, 15));
 
         addDataRow2(rateTable, "Coverage Part / LOB:", safe(req.productType(), "Technology Errors & Omissions"));
-        addDataRow2(rateTable, "Each Claim Limit of Liability:", safe(req.limitAmount(), "$5,000,000"));
-        addDataRow2(rateTable, "Policy Aggregate Limit:", safe(req.limitAmount(), "$5,000,000"));
-        addDataRow2(rateTable, "Self-Insured Retention (Each Claim):", safe(req.retentionAmount(), "$50,000"));
-        addDataRow2(rateTable, "Base Rate per $1k Gross Revenue:", safe(req.baseRate(), "$12.50"));
-        addDataRow2(rateTable, "Underwriter Schedule Factor:", safe(req.scheduleMod(), "0.950 (5% Tier-1 Credit)"));
+        addDataRow2(rateTable, "Each Claim Limit of Liability:", formatCurrencyWhole(req.limitAmount(), "$5,000,000"));
+        addDataRow2(rateTable, "Policy Aggregate Limit:", formatCurrencyWhole(req.limitAmount(), "$5,000,000"));
+        addDataRow2(rateTable, "Self-Insured Retention (Each Claim):", formatCurrencyWhole(req.retentionAmount(), "$50,000"));
+        addDataRow2(rateTable, "Base Rate per $1k Gross Revenue:", formatBaseRate(req.baseRate(), "$1.85"));
+        addDataRow2(rateTable, "Underwriter Schedule Factor:", formatScheduleMod(req.scheduleMod(), "0.900 (10% Credit Applied)"));
 
+        String quotePremStr = formatCurrency(req.premiumAmount(), "$32,500.00");
         Row premR = rateTable.getRows().add();
         addStyledCell(premR, "ANNUAL INDICATED QUOTE PREMIUM:", true, 9, Color.getBlack(), rgb(241, 245, 249));
-        addStyledCell(premR, safe(req.premiumAmount(), "$32,500"), true, 10, rgb(2, 132, 199), rgb(241, 245, 249));
+        addStyledCell(premR, quotePremStr, true, 10, rgb(2, 132, 199), rgb(241, 245, 249));
         page.getParagraphs().add(rateTable);
 
         // Rating Audit Trace (BRMS / Rule Flow Audit Steps)
@@ -324,9 +337,9 @@ public class AsposePdfGeneratorService {
 
         addDataRow2(sum, "Policy Identification:", safe(req.entityNbr(), "POL-2026-8832"));
         addDataRow2(sum, "Covered Line of Business:", safe(req.productType(), "Technology Errors & Omissions"));
-        addDataRow2(sum, "Policy Limit of Liability:", safe(req.limitAmount(), "$5,000,000") + " Each Claim & Aggregate");
-        addDataRow2(sum, "Self-Insured Retention:", safe(req.retentionAmount(), "$50,000") + " Each Claim");
-        addDataRow2(sum, "Total Inception Premium:", safe(req.premiumAmount(), "$32,500"));
+        addDataRow2(sum, "Policy Limit of Liability:", formatCurrencyWhole(req.limitAmount(), "$5,000,000") + " Each Claim & Aggregate");
+        addDataRow2(sum, "Self-Insured Retention:", formatCurrencyWhole(req.retentionAmount(), "$50,000") + " Each Claim");
+        addDataRow2(sum, "Total Inception Premium:", formatCurrency(req.premiumAmount(), "$32,500.00"));
         page.getParagraphs().add(sum);
 
         addSignatureBlock(page, safe(req.signatoryName(), safe(req.underwriterName(), "Michael Chang")), "Senior Underwriting Officer, Helios Suite");
@@ -473,5 +486,72 @@ public class AsposePdfGeneratorService {
 
     private String safe(String val, String def) {
         return (val != null && !val.isBlank()) ? val : def;
+    }
+
+    private double parseDouble(String val, double def) {
+        if (val == null || val.isBlank()) return def;
+        try {
+            String clean = val.replaceAll("[^0-9.-]", "");
+            if (clean.isBlank()) return def;
+            return Double.parseDouble(clean);
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private String formatCurrency(String val, String def) {
+        if (val == null || val.isBlank()) return def;
+        try {
+            String clean = val.replaceAll("[^0-9.-]", "");
+            if (clean.isBlank()) return def;
+            double d = Double.parseDouble(clean);
+            return String.format("$%,.2f", d);
+        } catch (Exception e) {
+            return val.startsWith("$") ? val : ("$" + val);
+        }
+    }
+
+    private String formatCurrencyWhole(String val, String def) {
+        if (val == null || val.isBlank()) return def;
+        try {
+            String clean = val.replaceAll("[^0-9.-]", "");
+            if (clean.isBlank()) return def;
+            double d = Double.parseDouble(clean);
+            return String.format("$%,.0f", d);
+        } catch (Exception e) {
+            return val.startsWith("$") ? val : ("$" + val);
+        }
+    }
+
+    private String formatBaseRate(String val, String def) {
+        if (val == null || val.isBlank()) return def;
+        try {
+            String clean = val.replaceAll("[^0-9.-]", "");
+            if (clean.isBlank()) return def;
+            double d = Double.parseDouble(clean);
+            return String.format("$%.2f", d);
+        } catch (Exception e) {
+            return val;
+        }
+    }
+
+    private String formatScheduleMod(String val, String def) {
+        if (val == null || val.isBlank()) return def;
+        try {
+            String clean = val.replaceAll("[^0-9.-]", "");
+            if (clean.isBlank()) return def;
+            double mod = Double.parseDouble(clean);
+            if (mod < 1.0) {
+                int credit = (int) Math.round((1.0 - mod) * 100);
+                return String.format("%.2f (%d%% Credit Applied)", mod, credit);
+            } else if (mod > 1.0) {
+                int debit = (int) Math.round((mod - 1.0) * 100);
+                return String.format("%.2f (+%d%% Surcharge Applied)", mod, debit);
+            } else {
+                return "1.00 (Standard Par)";
+            }
+        } catch (Exception e) {
+            return val;
+        }
     }
 }

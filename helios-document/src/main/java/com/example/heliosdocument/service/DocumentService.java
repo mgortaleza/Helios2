@@ -84,8 +84,10 @@ public class DocumentService {
                     default -> "Policy Declarations Schedule — " + entityNbr + " (" + req.insuredName() + ")";
                 };
 
+        GenerateDocumentRequest effectiveReq = enrichWithRatedQuoteDataIfMissing(tenantId, req);
+
         // 1. Delegate PDF generation strictly to DocGen microservice
-        DocgenClient.GeneratedDocumentResult generated = docgenClient.generate(req);
+        DocgenClient.GeneratedDocumentResult generated = docgenClient.generate(effectiveReq);
 
         // 2. Determine File Name
         String timestamp = LocalDate.now().toString().replace("-", "");
@@ -357,5 +359,118 @@ public class DocumentService {
         JdbcTemplate jdbc = getTenantJdbcTemplate(tenantId);
         int rows = jdbc.update("UPDATE dbo.DOC_DOCUMENT SET STATUS = 'DELETED' WHERE DOCUMENT_ID = ? AND TENANT_ID = ?", docId, tenantId);
         return rows > 0;
+    }
+
+    private GenerateDocumentRequest enrichWithRatedQuoteDataIfMissing(int tenantId, GenerateDocumentRequest req) {
+        boolean hasValidPrem = req.premiumAmount() != null
+                && !req.premiumAmount().trim().isBlank()
+                && !req.premiumAmount().trim().equals("$0")
+                && !req.premiumAmount().trim().equals("$0.00")
+                && !req.premiumAmount().trim().equals("0");
+
+        if (hasValidPrem && req.calculationTrace() != null && !req.calculationTrace().isEmpty()) {
+            return req;
+        }
+
+        try {
+            JdbcTemplate jdbc = getTenantJdbcTemplate(tenantId);
+            String entityType = (req.entityType() != null) ? req.entityType().toUpperCase().trim() : "POLICY";
+            int entityId = (req.entityId() != null) ? req.entityId() : 0;
+
+            String sql = null;
+            Object[] params = null;
+
+            if ("SUBMISSION".equalsIgnoreCase(entityType) && entityId > 0) {
+                sql = "SELECT TOP 1 PREMIUM, LIMIT_AMT, RETENTION_AMT, PRODUCT_CODE, SERFF_TRACKING_NBR, " +
+                      "CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD, " +
+                      "CALC_TRACE, ATTACHED_FORMS FROM dbo.UW_QUOTE WHERE SUBMSN_ID = ? ORDER BY QUOTE_ID DESC";
+                params = new Object[]{entityId};
+            } else if ("POLICY".equalsIgnoreCase(entityType) && entityId > 0) {
+                sql = "SELECT TOP 1 q.PREMIUM, q.LIMIT_AMT, q.RETENTION_AMT, q.PRODUCT_CODE, q.SERFF_TRACKING_NBR, " +
+                      "CAST(q.BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CAST(q.SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD, " +
+                      "q.CALC_TRACE, q.ATTACHED_FORMS FROM dbo.UW_QUOTE q " +
+                      "INNER JOIN dbo.UW_SUBMSN s ON s.SUBMSN_ID = q.SUBMSN_ID WHERE s.POLICY_ID = ? ORDER BY q.QUOTE_ID DESC";
+                params = new Object[]{entityId};
+            } else if ("QUOTE".equalsIgnoreCase(entityType)) {
+                sql = "SELECT TOP 1 PREMIUM, LIMIT_AMT, RETENTION_AMT, PRODUCT_CODE, SERFF_TRACKING_NBR, " +
+                      "CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD, " +
+                      "CALC_TRACE, ATTACHED_FORMS FROM dbo.UW_QUOTE WHERE QUOTE_ID = ? OR QUOTE_NBR = ? ORDER BY QUOTE_ID DESC";
+                params = new Object[]{entityId, req.entityNbr()};
+            }
+
+            if (sql != null) {
+                List<Map<String, Object>> rows = jdbc.queryForList(sql, params);
+                if (!rows.isEmpty()) {
+                    Map<String, Object> r = rows.get(0);
+                    String dbPrem = (String) r.get("PREMIUM");
+                    String dbLimit = (String) r.get("LIMIT_AMT");
+                    String dbRet = (String) r.get("RETENTION_AMT");
+                    String dbSerff = (String) r.get("SERFF_TRACKING_NBR");
+                    String dbBase = (String) r.get("BASE_RATE");
+                    String dbSched = (String) r.get("SCHEDULE_MOD");
+                    String dbTrace = (String) r.get("CALC_TRACE");
+
+                    log.info("Auto-enriching docgen request from dbo.UW_QUOTE: premium={}, limit={}, retention={}",
+                            dbPrem, dbLimit, dbRet);
+
+                    List<String> traceList = req.calculationTrace();
+                    if ((traceList == null || traceList.isEmpty()) && dbTrace != null && !dbTrace.isBlank()) {
+                        try {
+                            traceList = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                                    dbTrace, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+                        } catch (Exception e) {
+                            traceList = List.of(dbTrace);
+                        }
+                    }
+
+                    String effectivePremium = hasValidPrem ? req.premiumAmount() : dbPrem;
+                    String effectiveLimit = (req.limitAmount() != null && !req.limitAmount().isBlank()) ? req.limitAmount() : dbLimit;
+                    String effectiveRet = (req.retentionAmount() != null && !req.retentionAmount().isBlank()) ? req.retentionAmount() : dbRet;
+                    String effectiveSerff = (req.serffTrackingNumber() != null && !req.serffTrackingNumber().isBlank()) ? req.serffTrackingNumber() : dbSerff;
+                    String effectiveBase = (req.baseRate() != null && !req.baseRate().isBlank()) ? req.baseRate() : dbBase;
+                    String effectiveSched = (req.scheduleMod() != null && !req.scheduleMod().isBlank()) ? req.scheduleMod() : dbSched;
+
+                    return new GenerateDocumentRequest(
+                            tenantId,
+                            req.entityType(),
+                            req.entityId(),
+                            req.entityNbr(),
+                            req.docType(),
+                            req.docTitle(),
+                            req.insuredName(),
+                            req.insuredAddress(),
+                            (req.productType() != null && !req.productType().isBlank()) ? req.productType() : (String) r.get("PRODUCT_CODE"),
+                            req.underwriterName(),
+                            req.effectiveDate(),
+                            req.expirationDate(),
+                            req.retroactiveDate(),
+                            effectiveLimit,
+                            effectiveRet,
+                            effectivePremium,
+                            req.agencyInfo(),
+                            effectiveSerff,
+                            effectiveBase,
+                            effectiveSched,
+                            traceList,
+                            req.attachedForms(),
+                            req.letterSubject(),
+                            req.letterBody(),
+                            req.recipientName(),
+                            req.recipientTitle(),
+                            req.signatoryName(),
+                            req.signatoryTitle(),
+                            req.emailFrom(),
+                            req.emailTo(),
+                            req.emailDate(),
+                            req.emailBodyHtml(),
+                            req.emailAttachments()
+                    );
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not auto-enrich document generation request with rating data: {}", e.getMessage());
+        }
+
+        return req;
     }
 }

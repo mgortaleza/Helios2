@@ -1,7 +1,10 @@
 package com.example.heliosdocgen.model;
 
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record GenerateDocumentRequest(
         Integer tenantId,
         String entityType,
@@ -16,14 +19,14 @@ public record GenerateDocumentRequest(
         String effectiveDate,
         String expirationDate,
         String retroactiveDate,
-        String limitAmount,
-        String retentionAmount,
-        String premiumAmount,
+        @JsonAlias({"coverageLimit", "limit", "occurrenceLimit"}) String limitAmount,
+        @JsonAlias({"deductible", "retention"}) String retentionAmount,
+        @JsonAlias({"annualPremium", "premium", "finalAnnualPremium"}) String premiumAmount,
         String agencyInfo,
-        String serffTrackingNumber,
+        @JsonAlias({"serffTrackingNbr", "serffNumber"}) String serffTrackingNumber,
         String baseRate,
         String scheduleMod,
-        List<String> calculationTrace,
+        @JsonAlias({"calcTrace"}) List<String> calculationTrace,
         List<String> attachedForms,
         String letterSubject,
         String letterBody,

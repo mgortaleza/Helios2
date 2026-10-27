@@ -75,10 +75,14 @@ import {
   Clock,
   GitFork,
   Save,
-  Trash2
+  Trash2,
+  Inbox
 } from 'lucide-react';
 
 import RuleFlowStudio from './RuleFlowStudio';
+import DroolsRuleFlowStudio from './DroolsRuleFlowStudio';
+import TemplateAdminManager from './TemplateAdminManager';
+import IncomingDocumentsManager from './IncomingDocumentsManager';
 
 const adminTheme = createTheme({
   palette: {
@@ -938,7 +942,10 @@ export default function App() {
     { id: 'roles', label: 'Role & RBAC Manager', icon: <ShieldCheck size={18} /> },
     { id: 'users', label: 'User & Identity Manager', icon: <Users size={18} /> },
     { id: 'rating', label: 'Rating & State Filings', icon: <Calculator size={18} /> },
+    { id: 'drools-ruleflow', label: 'Drools RuleFlow Studio', icon: <Zap size={18} /> },
     { id: 'ruleflow', label: 'RuleFlow Studio & BRMS', icon: <GitFork size={18} /> },
+    { id: 'intake', label: 'Document Intake', icon: <Inbox size={18} /> },
+    { id: 'templates', label: 'Document Templates (Aspose)', icon: <FileText size={18} /> },
     { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
   ];
 
@@ -2442,6 +2449,21 @@ export default function App() {
                     </CardContent>
                   </Card>
                 </Box>
+              )}
+
+              {/* TAB: INCOMING DOCUMENTS INTAKE QUEUE */}
+              {activeTab === 'intake' && (
+                <IncomingDocumentsManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
+              )}
+
+              {/* TAB 5.5: WORD TEMPLATE INGESTION & ASPOSE PDF GENERATION */}
+              {activeTab === 'templates' && (
+                <TemplateAdminManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
+              )}
+
+                            {/* TAB: DROOLS RULEFLOW STUDIO */}
+              {activeTab === 'drools-ruleflow' && (
+                <DroolsRuleFlowStudio apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}
 
               {/* TAB 5: BRMS RULEFLOW STUDIO & VISUALIZER */}

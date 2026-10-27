@@ -5,13 +5,16 @@ $stagingDir = "\\10.1.10.56\c$\deploy\build_staging"
 if (Test-Path "$stagingDir\helios2_src") { Remove-Item "$stagingDir\helios2_src" -Recurse -Force }
 if (Test-Path "$stagingDir\admin_src") { Remove-Item "$stagingDir\admin_src" -Recurse -Force }
 if (Test-Path "$stagingDir\doc_src") { Remove-Item "$stagingDir\doc_src" -Recurse -Force }
+if (Test-Path "$stagingDir\docgen_src") { Remove-Item "$stagingDir\docgen_src" -Recurse -Force }
 New-Item -ItemType Directory -Path "$stagingDir\helios2_src" -Force | Out-Null
 New-Item -ItemType Directory -Path "$stagingDir\admin_src" -Force | Out-Null
 New-Item -ItemType Directory -Path "$stagingDir\doc_src" -Force | Out-Null
+New-Item -ItemType Directory -Path "$stagingDir\docgen_src" -Force | Out-Null
 
 Copy-Item -Path "c:\DEV\helios2\src\main\java\*" -Destination "$stagingDir\helios2_src" -Recurse -Force
 Copy-Item -Path "c:\DEV\helios2\helios-admin\src\main\java\*" -Destination "$stagingDir\admin_src" -Recurse -Force
 Copy-Item -Path "c:\DEV\helios2\helios-document\src\main\java\*" -Destination "$stagingDir\doc_src" -Recurse -Force
+Copy-Item -Path "c:\DEV\helios2\helios-docgen\src\main\java\*" -Destination "$stagingDir\docgen_src" -Recurse -Force
 
 Write-Host "Updating application.properties on target Tomcat instances..."
 Copy-Item -Path "c:\DEV\helios2\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\Tomcat11\webapps\helios2\WEB-INF\classes\application.properties" -Force
@@ -62,25 +65,43 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     if ($LASTEXITCODE -ne 0) { throw "helios-document compilation failed" }
     Write-Host "helios-document compiled successfully."
 
-    # 2d. Deploy classes
+    # 2d. Compile helios-docgen
+    $docgenClasses = "C:\deploy\build_staging\docgen_classes"
+    if (Test-Path $docgenClasses) { Remove-Item $docgenClasses -Recurse -Force }
+    New-Item -ItemType Directory -Path $docgenClasses -Force | Out-Null
+
+    $docgenFiles = Get-ChildItem -Path "C:\deploy\build_staging\docgen_src" -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName
+    $docgenCp = "C:\tomcat11-docgen\webapps\helios-docgen\WEB-INF\lib\*;C:\tomcat11-docgen\lib\*;$servlet"
+
+    Write-Host "Compiling $($docgenFiles.Count) Java files for helios-docgen..."
+    & $javac -parameters -cp $docgenCp -d $docgenClasses $docgenFiles
+    if ($LASTEXITCODE -ne 0) { throw "helios-docgen compilation failed" }
+    Write-Host "helios-docgen compiled successfully."
+
+    # 2e. Deploy classes
     Write-Host "Deploying classes to Tomcat11 webapps..."
     Copy-Item -Path "$h2Classes\*" -Destination "C:\Tomcat11\webapps\helios2\WEB-INF\classes\" -Recurse -Force
     Copy-Item -Path "$adminClasses\*" -Destination "C:\tomcat11-admin\webapps\helios-admin\WEB-INF\classes\" -Recurse -Force
     Copy-Item -Path "$docClasses\*" -Destination "C:\Tomcat11-Document\webapps\helios-document\WEB-INF\classes\" -Recurse -Force
+    Copy-Item -Path "$docgenClasses\*" -Destination "C:\tomcat11-docgen\webapps\helios-docgen\WEB-INF\classes\" -Recurse -Force
 
-    # 2e. Restart services
+    # 2f. Restart services
     Write-Host "Restarting Tomcat11..."
     Restart-Service Tomcat11 -Force
     Write-Host "Restarting Tomcat11Admin..."
     Restart-Service Tomcat11Admin -Force
     Write-Host "Restarting Tomcat11Document..."
     Restart-Service Tomcat11Document -Force
+    Write-Host "Restarting Tomcat11Docgen..."
+    Restart-Service Tomcat11Docgen -Force
     Write-Host "Tomcat services restarted."
 }
 
 Write-Host "=== 3. Deploying Frontend Bundles ==="
-Copy-Item -Path "c:\DEV\helios2\frontend\dist\*" -Destination "\\10.1.10.56\c$\nginx\html\helios2\" -Recurse -Force
-Write-Host "Main frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios2\"
+if (Test-Path "c:\DEV\helios2\frontend\dist") {
+    Copy-Item -Path "c:\DEV\helios2\frontend\dist\*" -Destination "\\10.1.10.56\c$\nginx\html\helios2\" -Recurse -Force
+    Write-Host "Main frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios2\"
+}
 if (Test-Path "c:\DEV\helios2\helios-admin\frontend\dist") {
     Copy-Item -Path "c:\DEV\helios2\helios-admin\frontend\dist\*" -Destination "\\10.1.10.56\c$\nginx\html\helios-admin\" -Recurse -Force
     Write-Host "Admin frontend bundle deployed to \\10.1.10.56\c$\nginx\html\helios-admin\"
