@@ -78,11 +78,13 @@ import {
   Save,
   Trash2,
   Inbox,
-  LayoutGrid
+  LayoutGrid,
+  FileCode
 } from 'lucide-react';
 
 import RuleFlowStudio from './RuleFlowStudio';
 import DroolsRuleFlowStudio from './DroolsRuleFlowStudio';
+import DecPageTemplateManager from './DecPageTemplateManager';
 import TemplateAdminManager from './TemplateAdminManager';
 import IncomingDocumentsManager from './IncomingDocumentsManager';
 
@@ -951,6 +953,7 @@ export default function App() {
     { id: 'drools-ruleflow', label: 'Drools RuleFlow Studio', icon: <Zap size={18} /> },
     { id: 'ruleflow', label: 'RuleFlow Studio & BRMS', icon: <GitFork size={18} /> },
     { id: 'intake', label: 'Document Intake', icon: <Inbox size={18} /> },
+    { id: 'dec-templates', label: 'Dec Page Templates', icon: <FileCode size={18} /> },
     { id: 'templates', label: 'Endorsement Templates', icon: <FileText size={18} /> },
     { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
   ];
@@ -2503,6 +2506,10 @@ export default function App() {
               )}
 
               {/* TAB 5.5: WORD TEMPLATE INGESTION & ASPOSE PDF GENERATION */}
+              {activeTab === 'dec-templates' && (
+                <DecPageTemplateManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
+              )}
+
               {(activeTab === 'templates' || activeTab === 'endorsements') && (
                 <TemplateAdminManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}

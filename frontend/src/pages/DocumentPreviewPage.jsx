@@ -69,8 +69,17 @@ export function DocumentPreviewPage() {
     setFrameLoading(true);
   }, []);
 
-  // 1. Initial hydration from localStorage
+  // 1. Initial hydration from window.opener or localStorage
   useEffect(() => {
+    try {
+      if (window.opener && window.opener.__helios_preview_payload) {
+        handleApplyPayload(window.opener.__helios_preview_payload);
+        return;
+      }
+    } catch (e) {
+      // Cross-origin access restriction if different domain, ignore
+    }
+
     try {
       const raw = localStorage.getItem('helios_doc_preview_payload');
       if (raw) {
@@ -188,12 +197,32 @@ export function DocumentPreviewPage() {
 
   const previewSrc = useMemo(() => {
     if (!activeDoc) return '';
-    return `/document-api/documents/incoming/${activeDoc.incomingId}/preview?tenantId=${tenantId}#toolbar=1`;
+    if (activeDoc.previewUrl) return activeDoc.previewUrl;
+    if (activeDoc.blobUrl) return activeDoc.blobUrl;
+    if (activeDoc.url) return activeDoc.url;
+    if (activeDoc.incomingId) {
+      return `/document-api/documents/incoming/${activeDoc.incomingId}/preview?tenantId=${tenantId}#toolbar=1`;
+    }
+    const docId = activeDoc.documentId || activeDoc.id;
+    if (docId) {
+      return `/document-api/documents/${docId}/preview?tenantId=${tenantId}#toolbar=1`;
+    }
+    return '';
   }, [activeDoc, tenantId]);
 
   const downloadUrl = useMemo(() => {
     if (!activeDoc) return '';
-    return `/document-api/documents/incoming/${activeDoc.incomingId}/download?tenantId=${tenantId}`;
+    if (activeDoc.downloadUrl) return activeDoc.downloadUrl;
+    if (activeDoc.blobUrl) return activeDoc.blobUrl;
+    if (activeDoc.previewUrl) return activeDoc.previewUrl;
+    if (activeDoc.incomingId) {
+      return `/document-api/documents/incoming/${activeDoc.incomingId}/download?tenantId=${tenantId}`;
+    }
+    const docId = activeDoc.documentId || activeDoc.id;
+    if (docId) {
+      return `/document-api/documents/${docId}/download?tenantId=${tenantId}`;
+    }
+    return '';
   }, [activeDoc, tenantId]);
 
   return (
@@ -351,7 +380,14 @@ export function DocumentPreviewPage() {
                 startIcon={<Download size={14} />}
                 disabled={!activeDoc}
                 onClick={() => {
-                  if (downloadUrl) window.open(downloadUrl, '_blank');
+                  if (downloadUrl) {
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = activeDoc?.fileName || activeDoc?.documentName || 'document.pdf';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }
                 }}
                 sx={{
                   color: '#e2e8f0',

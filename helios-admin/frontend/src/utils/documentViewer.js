@@ -1,0 +1,76 @@
+/**
+ * Universal document viewer caller: launches or focuses the detached
+ * 2nd-screen/tab document previewer created for the Document Inbox (#/document-preview).
+ *
+ * @param {Object|Array<Object>} docs - Single document or list of document objects
+ * @param {number} [initialIndex=0] - Initial document index to show
+ * @param {string|number} [tenantId=1] - Active tenant ID
+ */
+export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
+  const rawList = (Array.isArray(docs) ? docs : [docs]).filter(Boolean);
+  if (rawList.length === 0) return null;
+
+  // Normalize document fields so that incoming, repository, and dynamically generated docs all work
+  const normalizedDocs = rawList.map((d, idx) => {
+    const docName = d.documentName || d.fileName || d.title || d.form_name || `Document #${d.id || d.documentId || idx + 1}`;
+    const fName = d.fileName || (d.documentName ? (d.documentName.endsWith('.pdf') ? d.documentName : `${d.documentName}.pdf`) : 'document.pdf');
+    return {
+      ...d,
+      documentName: docName,
+      fileName: fName,
+      incomingId: d.incomingId || null,
+      documentId: d.documentId || d.id || null,
+      previewUrl: d.previewUrl || d.blobUrl || d.url || null,
+      downloadUrl: d.downloadUrl || d.blobUrl || null,
+      fileSizeBytes: d.fileSizeBytes || d.size || d.file_size || 0,
+      mimeType: d.mimeType || d.fileExtension || 'application/pdf',
+      status: d.status || 'READY'
+    };
+  });
+
+  const validIndex = Math.max(0, Math.min(initialIndex, normalizedDocs.length - 1));
+  const payload = {
+    docs: normalizedDocs,
+    activeIndex: validIndex,
+    tenantId: String(tenantId || 1),
+    timestamp: Date.now()
+  };
+
+  try {
+    localStorage.setItem('helios_doc_preview_payload', JSON.stringify(payload));
+  } catch (e) {
+    console.warn('Failed to save preview payload in localStorage:', e);
+  }
+
+  try {
+    window.__helios_preview_payload = payload;
+  } catch (e) {}
+
+  try {
+    const channel = new BroadcastChannel('helios_doc_preview_channel');
+    channel.postMessage({ type: 'UPDATE_PREVIEW', ...payload });
+    setTimeout(() => channel.close(), 100);
+  } catch (e) {
+    console.warn('BroadcastChannel error:', e);
+  }
+
+  let previewUrl = `http://${window.location.hostname}:80/#/document-preview`;
+  if (window.location.port !== '8090') {
+    previewUrl = `${window.location.origin}${window.location.pathname}#/document-preview`;
+  }
+
+  const popup = window.open(
+    previewUrl,
+    'helios_doc_preview_window',
+    'width=1320,height=920,left=120,top=60,resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no'
+  );
+
+  if (popup && !popup.closed) {
+    try {
+      popup.focus();
+    } catch (e) {}
+  }
+
+  return popup;
+}
+

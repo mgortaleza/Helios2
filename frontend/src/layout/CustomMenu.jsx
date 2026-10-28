@@ -779,6 +779,30 @@ export function CustomMenu() {
                     </List>
                   </Collapse>
                 </ListItem>
+
+                {/* 4. Dec Page Templates Item */}
+                <ListItem disablePadding sx={{ mb: 0.5 }}>
+                  <ListItemButton
+                    onClick={() => navigate('/dec-page-templates')}
+                    selected={lowerPath.includes('dec-page-templates')}
+                    sx={{
+                      borderRadius: 1.5,
+                      py: 0.8,
+                      px: 1.25,
+                      backgroundColor: lowerPath.includes('dec-page-templates') ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                      color: lowerPath.includes('dec-page-templates') ? '#38bdf8' : '#cbd5e1',
+                      '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)', color: '#ffffff' }
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 32, color: lowerPath.includes('dec-page-templates') ? '#38bdf8' : '#94a3b8' }}>
+                      <FileText size={17} />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Dec Page Templates"
+                      primaryTypographyProps={{ fontSize: '0.84rem', fontWeight: lowerPath.includes('dec-page-templates') ? 700 : 500 }}
+                    />
+                  </ListItemButton>
+                </ListItem>
               </List>
             ) : (
               /* --- Claims Items --- */
