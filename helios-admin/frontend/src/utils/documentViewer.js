@@ -65,7 +65,7 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
     console.warn('Failed to save preview payload in localStorage:', e);
   }
 
-  // 2. Attach to window object for cross-origin/opener inspection
+  // 2. Attach to window object for opener inspection
   try {
     window.__helios_preview_payload = payload;
   } catch (e) {}
@@ -78,11 +78,16 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
   } catch (e) {}
 
   // 4. Open or focus the named popup window
-  // If running on admin port 8090, target the underwriting app port 80 where the preview route lives
-  let previewUrl = `http://${window.location.hostname}:80/#/document-preview`;
-  if (window.location.port !== '8090') {
-    previewUrl = `${window.location.origin}/#/document-preview`;
-  }
+  // Construct direct fallback query params on hash so preview always hydrates even across origin/storage boundaries
+  const firstDoc = normalizedDocs[validIndex] || normalizedDocs[0];
+  const queryParams = new URLSearchParams();
+  queryParams.set('tenantId', resolvedTenantId);
+  if (firstDoc.templateId) queryParams.set('templateId', firstDoc.templateId);
+  if (firstDoc.incomingId) queryParams.set('incomingId', firstDoc.incomingId);
+  if (firstDoc.documentId) queryParams.set('docId', firstDoc.documentId);
+  if (firstDoc.documentName) queryParams.set('docName', firstDoc.documentName);
+
+  const previewUrl = `${window.location.origin}/#/document-preview?${queryParams.toString()}`;
 
   const popup = window.open(
     previewUrl,
@@ -93,6 +98,14 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
   if (popup && !popup.closed) {
     try {
       popup.focus();
+    } catch (e) {}
+    try {
+      // Send cross-window postMessage fallback
+      setTimeout(() => {
+        try {
+          popup.postMessage({ type: 'HELIOS_PREVIEW_PAYLOAD', ...payload }, '*');
+        } catch (e) {}
+      }, 300);
     } catch (e) {}
   }
 

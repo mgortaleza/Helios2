@@ -74,7 +74,7 @@ export function DocumentPreviewPage() {
     setFrameLoading(true);
   }, []);
 
-  // 1. Initial hydration from window.opener or localStorage
+  // 1. Initial hydration from window.opener, localStorage, or URL query parameters
   useEffect(() => {
     try {
       if (window.opener && window.opener.__helios_preview_payload) {
@@ -89,14 +89,50 @@ export function DocumentPreviewPage() {
       const raw = localStorage.getItem('helios_doc_preview_payload');
       if (raw) {
         const parsed = JSON.parse(raw);
-        handleApplyPayload(parsed);
+        if (parsed && Array.isArray(parsed.docs) && parsed.docs.length > 0) {
+          handleApplyPayload(parsed);
+          return;
+        }
       }
     } catch (err) {
       console.warn('Failed to parse initial preview payload:', err);
     }
+
+    // Fallback: extract parameters directly from the URL hash or search string
+    try {
+      let searchStr = window.location.search;
+      if (window.location.hash.includes('?')) {
+        searchStr = window.location.hash.substring(window.location.hash.indexOf('?'));
+      }
+      const params = new URLSearchParams(searchStr);
+      const templateId = params.get('templateId');
+      const incomingId = params.get('incomingId');
+      const docId = params.get('docId') || params.get('documentId') || params.get('id');
+      const qTenantId = params.get('tenantId') || '1';
+      const docName = params.get('docName') || (templateId ? `Dec Page Template #${templateId}` : (incomingId ? `Incoming Document #${incomingId}` : 'Document Preview'));
+
+      if (templateId || incomingId || docId) {
+        const fallbackDoc = {
+          templateId: templateId || null,
+          incomingId: incomingId || null,
+          documentId: docId || null,
+          documentName: docName,
+          fileName: docName.endsWith('.pdf') ? docName : `${docName}.pdf`,
+          status: 'READY'
+        };
+        handleApplyPayload({
+          docs: [fallbackDoc],
+          activeIndex: 0,
+          tenantId: qTenantId,
+          timestamp: Date.now()
+        });
+      }
+    } catch (e) {
+      console.warn('URL param fallback extraction failed:', e);
+    }
   }, [handleApplyPayload]);
 
-  // 2. Cross-window listeners: BroadcastChannel & StorageEvent
+  // 2. Cross-window listeners: BroadcastChannel, StorageEvent, and HTML5 window.onmessage
   useEffect(() => {
     let channel;
     try {
@@ -121,13 +157,21 @@ export function DocumentPreviewPage() {
       }
     };
 
+    const onWindowMessage = (e) => {
+      if (e.data && (e.data.type === 'HELIOS_PREVIEW_PAYLOAD' || e.data.type === 'UPDATE_PREVIEW')) {
+        handleApplyPayload(e.data);
+      }
+    };
+
     window.addEventListener('storage', onStorageChange);
+    window.addEventListener('message', onWindowMessage);
 
     return () => {
       if (channel) {
         channel.close();
       }
       window.removeEventListener('storage', onStorageChange);
+      window.removeEventListener('message', onWindowMessage);
     };
   }, [handleApplyPayload]);
 

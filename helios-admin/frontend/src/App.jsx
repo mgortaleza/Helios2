@@ -952,7 +952,6 @@ export default function App() {
     { id: 'rating', label: 'Rating & State Filings', icon: <Calculator size={18} /> },
     { id: 'drools-ruleflow', label: 'Drools RuleFlow Studio', icon: <Zap size={18} /> },
     { id: 'ruleflow', label: 'RuleFlow Studio & BRMS', icon: <GitFork size={18} /> },
-    { id: 'intake', label: 'Document Intake', icon: <Inbox size={18} /> },
     { id: 'dec-templates', label: 'Dec Page Templates', icon: <FileCode size={18} /> },
     { id: 'templates', label: 'Endorsement Templates', icon: <FileText size={18} /> },
     { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
@@ -2498,11 +2497,6 @@ export default function App() {
                     </CardContent>
                   </Card>
                 </Box>
-              )}
-
-              {/* TAB: INCOMING DOCUMENTS INTAKE QUEUE */}
-              {activeTab === 'intake' && (
-                <IncomingDocumentsManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}
 
               {/* TAB 5.5: WORD TEMPLATE INGESTION & ASPOSE PDF GENERATION */}
