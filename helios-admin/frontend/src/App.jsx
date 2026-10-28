@@ -149,6 +149,19 @@ const MODULE_OPTIONS = [
   { id: 'claims', label: 'Claims' }
 ];
 
+const TIER2_UW_OPTIONS = [
+  { id: 'inbox', label: 'Document Inbox', route: '/inbox' },
+  { id: 'policies', label: 'Policies Portfolio', route: '/policies' },
+  { id: 'submissions', label: 'Submissions Intake', route: '/submissions' }
+];
+
+const TIER2_CLAIMS_OPTIONS = [
+  { id: 'claims', label: 'Claims Registry', route: '/claims' },
+  { id: 'claims/fnol', label: 'Report FNOL', route: '/claims/fnol' },
+  { id: 'claims/open', label: 'Open Claims & Reserves', route: '/claims/open' },
+  { id: 'claims/loss-runs', label: 'Loss Runs & Reports', route: '/claims/loss-runs' }
+];
+
 function StatusBadge({ ok, label }) {
   const isWarn = label === 'STALE' || label === 'WAITING';
   const bg = isWarn ? '#fef3c7' : ok ? '#dcfce7' : '#fee2e2';
@@ -303,6 +316,9 @@ export default function App() {
     allowedModules: 'dashboard,policy,submissions,claims',
     defaultTaskFilter: '',
     defaultTier1Nav: 'dashboard',
+    defaultTier2NavUw: 'submissions',
+    defaultTier2NavClaims: 'claims',
+    allowedTier2Nav: 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs',
     canCreateSubmission: true,
     canAddOrganization: true,
     canReportClaim: true
@@ -893,6 +909,9 @@ export default function App() {
       allowedModules: role.allowedModules || 'dashboard,policy,submissions,claims',
       defaultTaskFilter: role.defaultTaskFilter || '',
       defaultTier1Nav: role.defaultTier1Nav || 'dashboard',
+      defaultTier2NavUw: role.defaultTier2NavUw || 'submissions',
+      defaultTier2NavClaims: role.defaultTier2NavClaims || 'claims',
+      allowedTier2Nav: role.allowedTier2Nav || 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs',
       canCreateSubmission: Boolean(role.canCreateSubmission),
       canAddOrganization: Boolean(role.canAddOrganization),
       canReportClaim: Boolean(role.canReportClaim)
@@ -909,6 +928,9 @@ export default function App() {
       allowedModules: 'dashboard,policy,submissions',
       defaultTaskFilter: '',
       defaultTier1Nav: 'underwriting',
+      defaultTier2NavUw: 'submissions',
+      defaultTier2NavClaims: 'claims',
+      allowedTier2Nav: 'inbox,policies,submissions',
       canCreateSubmission: true,
       canAddOrganization: true,
       canReportClaim: false
@@ -923,6 +945,12 @@ export default function App() {
     setRoleForm({ ...roleForm, allowedModules: next.join(',') });
   };
 
+  const toggleRoleTier2Nav = (navId) => {
+    const list = (roleForm.allowedTier2Nav || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const next = list.includes(navId) ? list.filter((m) => m !== navId) : [...list, navId];
+    setRoleForm({ ...roleForm, allowedTier2Nav: next.join(',') });
+  };
+
   const handleSaveRole = async (e) => {
     e.preventDefault();
     try {
@@ -933,7 +961,10 @@ export default function App() {
           tenantId: Number(roleForm.tenantId),
           roleCode: roleForm.roleCode.trim().toUpperCase(),
           roleName: roleForm.roleName.trim(),
-          defaultTier1Nav: roleForm.defaultTier1Nav || 'dashboard'
+          defaultTier1Nav: roleForm.defaultTier1Nav || 'dashboard',
+          defaultTier2NavUw: roleForm.defaultTier2NavUw || 'submissions',
+          defaultTier2NavClaims: roleForm.defaultTier2NavClaims || 'claims',
+          allowedTier2Nav: roleForm.allowedTier2Nav || 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs'
         })
       });
       setOpenRoleDialog(false);
@@ -1269,6 +1300,7 @@ export default function App() {
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ROLE CODE</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ROLE NAME</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>DEFAULT TIER 1 (NAV)</TableCell>
+                            <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>TIER 2 NAV (DEFAULTS & ITEMS)</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ALLOWED SIDEBAR TABS</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>DEFAULT TASK QUEUE</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ACTION PERMISSIONS</TableCell>
@@ -1320,6 +1352,25 @@ export default function App() {
                                     }}
                                   />
                                 )}
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                  <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <Chip
+                                      label={`UW: ${r.defaultTier2NavUw || 'submissions'}`}
+                                      size="small"
+                                      sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#e0f2fe', color: '#0369a1', fontWeight: 600 }}
+                                    />
+                                    <Chip
+                                      label={`Claims: ${r.defaultTier2NavClaims || 'claims'}`}
+                                      size="small"
+                                      sx={{ fontSize: '0.68rem', height: 20, bgcolor: '#fef3c7', color: '#b45309', fontWeight: 600 }}
+                                    />
+                                  </Box>
+                                  <Typography variant="caption" sx={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                    {((r.allowedTier2Nav || 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs').split(',').filter(Boolean).length)} items enabled
+                                  </Typography>
+                                </Box>
                               </TableCell>
                               <TableCell>
                                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
@@ -2813,6 +2864,95 @@ export default function App() {
                 Default Tier 1 navigation tab and workspace loaded automatically when users with this role log in.
               </FormHelperText>
             </FormControl>
+
+            {/* TIER 2 NAVIGATION CUSTOMIZATION */}
+            <Box sx={{ p: 2, bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0f172a' }}>
+                  Tier 2 Cascading Navigation Customization
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#64748b' }}>
+                  Customize default landing views and visible secondary navigation items for Underwriting and Claims departments.
+                </Typography>
+              </Box>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel id="default-tier2-uw-label">Default Underwriting View (Tier 2)</InputLabel>
+                    <Select
+                      labelId="default-tier2-uw-label"
+                      label="Default Underwriting View (Tier 2)"
+                      value={roleForm.defaultTier2NavUw || 'submissions'}
+                      onChange={(e) => setRoleForm({ ...roleForm, defaultTier2NavUw: e.target.value })}
+                    >
+                      <MenuItem value="submissions">Submissions Intake (/submissions)</MenuItem>
+                      <MenuItem value="inbox">Document Inbox (/inbox)</MenuItem>
+                      <MenuItem value="policies">Policies Portfolio (/policies)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel id="default-tier2-claims-label">Default Claims View (Tier 2)</InputLabel>
+                    <Select
+                      labelId="default-tier2-claims-label"
+                      label="Default Claims View (Tier 2)"
+                      value={roleForm.defaultTier2NavClaims || 'claims'}
+                      onChange={(e) => setRoleForm({ ...roleForm, defaultTier2NavClaims: e.target.value })}
+                    >
+                      <MenuItem value="claims">Claims Registry (/claims)</MenuItem>
+                      <MenuItem value="claims/fnol">Report FNOL (/claims/fnol)</MenuItem>
+                      <MenuItem value="claims/open">Open Claims & Reserves (/claims/open)</MenuItem>
+                      <MenuItem value="claims/loss-runs">Loss Runs & Reports (/claims/loss-runs)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+
+              <Box>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: '#475569', display: 'block', mb: 0.75 }}>
+                  Enabled Underwriting Tier 2 Items:
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {TIER2_UW_OPTIONS.map((item) => {
+                    const active = (roleForm.allowedTier2Nav || '').split(',').includes(item.id);
+                    return (
+                      <Chip
+                        key={item.id}
+                        label={item.label}
+                        color={active ? 'primary' : 'default'}
+                        variant={active ? 'filled' : 'outlined'}
+                        onClick={() => toggleRoleTier2Nav(item.id)}
+                        sx={{ fontSize: '0.78rem' }}
+                      />
+                    );
+                  })}
+                </Box>
+              </Box>
+
+              <Box>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: '#475569', display: 'block', mb: 0.75 }}>
+                  Enabled Claims Tier 2 Items:
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {TIER2_CLAIMS_OPTIONS.map((item) => {
+                    const active = (roleForm.allowedTier2Nav || '').split(',').includes(item.id);
+                    return (
+                      <Chip
+                        key={item.id}
+                        label={item.label}
+                        color={active ? 'secondary' : 'default'}
+                        variant={active ? 'filled' : 'outlined'}
+                        onClick={() => toggleRoleTier2Nav(item.id)}
+                        sx={{ fontSize: '0.78rem' }}
+                      />
+                    );
+                  })}
+                </Box>
+              </Box>
+            </Box>
 
             <FormControl fullWidth size="small">
               <InputLabel>Default Dashboard Task Filter</InputLabel>

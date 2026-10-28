@@ -90,24 +90,6 @@ async function fetchMappedResource(resource, queryFilter = '') {
     ];
   }
 
-  if (resource === 'dec-page-templates') {
-    try {
-      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
-      const res = await fetch('/document-api/dec-page-templates', {
-        headers: {
-          'X-Tenant-Id': String(tenantId)
-        }
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (Array.isArray(data) ? data : []).map((item) => ({
-        ...item,
-        id: item.id
-      }));
-    } catch {
-      return [];
-    }
-  }
 
   if (resource === 'forms') {
     return [
@@ -198,17 +180,6 @@ export const dataProvider = {
   },
 
   getOne: async (resource, params) => {
-    if (resource === 'dec-page-templates') {
-      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
-      const res = await fetch(`/document-api/dec-page-templates/${params.id}`, {
-        headers: {
-          'X-Tenant-Id': String(tenantId)
-        }
-      });
-      if (!res.ok) throw new Error(`Dec Page Template #${params.id} not found`);
-      const data = await res.json();
-      return { data: { ...data, id: data.id } };
-    }
     const records = await fetchMappedResource(resource);
     const match = records.find((r) => String(r.id) === String(params.id));
     if (!match) {
@@ -249,33 +220,6 @@ export const dataProvider = {
   create: async (resource, params) => {
     const { data } = params;
 
-    if (resource === 'dec-page-templates') {
-      const formData = new FormData();
-      const rawFile = data.file?.rawFile || (data.file instanceof File ? data.file : null);
-      if (rawFile) {
-        formData.append('file', rawFile);
-      }
-      formData.append('form_id', data.form_id || data.formId || '');
-      formData.append('form_revision', data.form_revision || data.formRevision || '');
-      formData.append('form_name', data.form_name || data.formName || '');
-      formData.append('effective_date', data.effective_date || data.effectiveDate || '');
-      formData.append('product_id', String(data.product_id || data.productId || '1'));
-
-      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
-      const res = await fetch('/document-api/dec-page-templates', {
-        method: 'POST',
-        headers: {
-          'X-Tenant-Id': String(tenantId)
-        },
-        body: formData
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-        throw new Error(err.error || 'Failed to upload declaration page template');
-      }
-      const created = await res.json();
-      return { data: { ...created, id: created.id } };
-    }
 
     if (resource === 'submissions') {
       const partyId = Number(data.partyId ?? data.insuredPid);
@@ -359,16 +303,6 @@ export const dataProvider = {
 
   updateMany: async () => ({ data: [] }),
   delete: async (resource, params) => {
-    if (resource === 'dec-page-templates') {
-      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
-      await fetch(`/document-api/dec-page-templates/${params.id}`, {
-        method: 'DELETE',
-        headers: {
-          'X-Tenant-Id': String(tenantId)
-        }
-      });
-      return { data: { id: params.id } };
-    }
     return { data: {} };
   },
   deleteMany: async () => ({ data: [] }),

@@ -61,9 +61,12 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (user, tenantId) => {
     let resolvedTier1 = user?.defaultTier1Nav;
+    let resolvedTier2Uw = user?.defaultTier2NavUw;
+    let resolvedTier2Claims = user?.defaultTier2NavClaims;
+    let resolvedAllowedTier2 = user?.allowedTier2Nav;
 
-    // If defaultTier1Nav is not on user payload, dynamically fetch roles from tenant config
-    if (!resolvedTier1) {
+    // Dynamically fetch roles from tenant config to ensure tier 1 and tier 2 navigation configs are present
+    if (!resolvedTier1 || !resolvedTier2Uw || !resolvedTier2Claims || !resolvedAllowedTier2) {
       try {
         const res = await fetch(`/api/roles?tenantId=${tenantId}`, {
           headers: { 'X-Tenant-ID': String(tenantId) }
@@ -74,24 +77,46 @@ export function AuthProvider({ children }) {
             const matchedRole = roles.find(
               (r) => (r.roleCode || '').toUpperCase() === (user?.roleCode || '').toUpperCase()
             );
-            if (matchedRole && matchedRole.defaultTier1Nav) {
-              resolvedTier1 = matchedRole.defaultTier1Nav;
+            if (matchedRole) {
+              if (matchedRole.defaultTier1Nav && !resolvedTier1) resolvedTier1 = matchedRole.defaultTier1Nav;
+              if (matchedRole.defaultTier2NavUw && !resolvedTier2Uw) resolvedTier2Uw = matchedRole.defaultTier2NavUw;
+              if (matchedRole.defaultTier2NavClaims && !resolvedTier2Claims) resolvedTier2Claims = matchedRole.defaultTier2NavClaims;
+              if (matchedRole.allowedTier2Nav && !resolvedAllowedTier2) resolvedAllowedTier2 = matchedRole.allowedTier2Nav;
             }
           }
         }
       } catch (e) {
-        console.warn('Could not fetch role defaultTier1Nav:', e);
+        console.warn('Could not fetch role navigation configs:', e);
       }
     }
 
     if (!resolvedTier1) {
       resolvedTier1 = resolveUserDefaultTier1(user);
     }
+    if (!resolvedTier2Uw) {
+      resolvedTier2Uw = 'submissions';
+    }
+    if (!resolvedTier2Claims) {
+      resolvedTier2Claims = 'claims';
+    }
+    if (!resolvedAllowedTier2) {
+      const upper = (user?.roleCode || '').toUpperCase();
+      if (upper.includes('UNDERWRITER') || upper === 'UW') {
+        resolvedAllowedTier2 = 'inbox,policies,submissions';
+      } else if (upper.includes('CLAIM')) {
+        resolvedAllowedTier2 = 'claims,claims/fnol,claims/open,claims/loss-runs';
+      } else {
+        resolvedAllowedTier2 = 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs';
+      }
+    }
 
     const userWithTenant = {
       ...user,
       tenantId: Number(tenantId),
-      defaultTier1Nav: resolvedTier1
+      defaultTier1Nav: resolvedTier1,
+      defaultTier2NavUw: resolvedTier2Uw,
+      defaultTier2NavClaims: resolvedTier2Claims,
+      allowedTier2Nav: resolvedAllowedTier2
     };
 
     setCurrentUser(userWithTenant);

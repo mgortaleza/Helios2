@@ -119,6 +119,15 @@ export function CustomMenu() {
 
   const { currentUser, logout } = useAuth();
 
+  const allowedTier2List = currentUser?.allowedTier2Nav
+    ? currentUser.allowedTier2Nav.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    : null;
+
+  const isTier2Allowed = (itemKey) => {
+    if (!allowedTier2List || allowedTier2List.length === 0) return true;
+    return allowedTier2List.includes(itemKey.toLowerCase());
+  };
+
   const handleLogout = () => {
     logout();
   };
@@ -559,6 +568,7 @@ export function CustomMenu() {
               /* --- Underwriting Items --- */
               <List disablePadding>
                 {/* 1. Document Inbox */}
+                {isTier2Allowed('inbox') && (
                 <ListItem disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => navigate('/inbox')}
@@ -581,8 +591,10 @@ export function CustomMenu() {
                     />
                   </ListItemButton>
                 </ListItem>
+                )}
 
                 {/* 2. Policies Item with Nested Sub-Menu */}
+                {isTier2Allowed('policies') && (
                 <ListItem disablePadding sx={{ display: 'block', mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => {
@@ -680,8 +692,10 @@ export function CustomMenu() {
                     </List>
                   </Collapse>
                 </ListItem>
+                )}
 
                 {/* 3. Submissions Item with Nested Sub-Menu */}
+                {isTier2Allowed('submissions') && (
                 <ListItem disablePadding sx={{ display: 'block', mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => {
@@ -779,34 +793,12 @@ export function CustomMenu() {
                     </List>
                   </Collapse>
                 </ListItem>
-
-                {/* 4. Dec Page Templates Item */}
-                <ListItem disablePadding sx={{ mb: 0.5 }}>
-                  <ListItemButton
-                    onClick={() => navigate('/dec-page-templates')}
-                    selected={lowerPath.includes('dec-page-templates')}
-                    sx={{
-                      borderRadius: 1.5,
-                      py: 0.8,
-                      px: 1.25,
-                      backgroundColor: lowerPath.includes('dec-page-templates') ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-                      color: lowerPath.includes('dec-page-templates') ? '#38bdf8' : '#cbd5e1',
-                      '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)', color: '#ffffff' }
-                    }}
-                  >
-                    <ListItemIcon sx={{ minWidth: 32, color: lowerPath.includes('dec-page-templates') ? '#38bdf8' : '#94a3b8' }}>
-                      <FileText size={17} />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Dec Page Templates"
-                      primaryTypographyProps={{ fontSize: '0.84rem', fontWeight: lowerPath.includes('dec-page-templates') ? 700 : 500 }}
-                    />
-                  </ListItemButton>
-                </ListItem>
+                )}
               </List>
             ) : (
               /* --- Claims Items --- */
               <List disablePadding>
+                {isTier2Allowed('claims') && (
                 <ListItem disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => navigate('/claims')}
@@ -826,7 +818,9 @@ export function CustomMenu() {
                     <ListItemText primary="Claims Registry" primaryTypographyProps={{ fontSize: '0.84rem' }} />
                   </ListItemButton>
                 </ListItem>
+                )}
 
+                {(isTier2Allowed('claims/fnol') || isTier2Allowed('fnol')) && (
                 <ListItem disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => navigate('/claims/fnol')}
@@ -846,7 +840,9 @@ export function CustomMenu() {
                     <ListItemText primary="Report FNOL" primaryTypographyProps={{ fontSize: '0.84rem' }} />
                   </ListItemButton>
                 </ListItem>
+                )}
 
+                {(isTier2Allowed('claims/open') || isTier2Allowed('open')) && (
                 <ListItem disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => navigate('/claims/open')}
@@ -866,7 +862,9 @@ export function CustomMenu() {
                     <ListItemText primary="Open Claims & Reserves" primaryTypographyProps={{ fontSize: '0.84rem' }} />
                   </ListItemButton>
                 </ListItem>
+                )}
 
+                {(isTier2Allowed('claims/loss-runs') || isTier2Allowed('loss-runs')) && (
                 <ListItem disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
                     onClick={() => navigate('/claims/loss-runs')}
@@ -886,6 +884,7 @@ export function CustomMenu() {
                     <ListItemText primary="Loss Runs & Reports" primaryTypographyProps={{ fontSize: '0.84rem' }} />
                   </ListItemButton>
                 </ListItem>
+                )}
               </List>
             )}
           </Box>

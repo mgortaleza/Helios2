@@ -23,7 +23,7 @@ Copy-Item -Path "c:\DEV\helios2\helios-document\src\main\resources\application.p
 
 Write-Host "=== 2. Compiling on APPTST via Invoke-Command ==="
 Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
-    $ErrorActionPreference = "Stop"
+    $ErrorActionPreference = "Continue"
     $javac = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\javac.exe"
     $servlet = "C:\Tomcat11\lib\servlet-api.jar"
     
@@ -36,8 +36,8 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     $h2Cp = "C:\Tomcat11\webapps\helios2\WEB-INF\lib\*;$servlet"
     
     Write-Host "Compiling $($h2Files.Count) Java files for helios2..."
-    & $javac -parameters -cp $h2Cp -d $h2Classes $h2Files
-    if ($LASTEXITCODE -ne 0) { throw "helios2 compilation failed" }
+    $out1 = & $javac -nowarn -Xlint:none -parameters -cp $h2Cp -d $h2Classes $h2Files 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "helios2 compilation failed: $out1" }
     Write-Host "helios2 compiled successfully."
 
     # 2b. Compile helios-admin
@@ -49,8 +49,8 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     $adminCp = "C:\tomcat11-admin\webapps\helios-admin\WEB-INF\lib\*;$servlet"
 
     Write-Host "Compiling $($adminFiles.Count) Java files for helios-admin..."
-    & $javac -parameters -cp $adminCp -d $adminClasses $adminFiles
-    if ($LASTEXITCODE -ne 0) { throw "helios-admin compilation failed" }
+    $out2 = & $javac -nowarn -Xlint:none -parameters -cp $adminCp -d $adminClasses $adminFiles 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "helios-admin compilation failed: $out2" }
     Write-Host "helios-admin compiled successfully."
 
     # 2c. Compile helios-document
@@ -62,8 +62,8 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     $docCp = "C:\Tomcat11-Document\webapps\helios-document\WEB-INF\lib\*;C:\Tomcat11-Document\lib\*;$servlet"
 
     Write-Host "Compiling $($docFiles.Count) Java files for helios-document..."
-    & $javac -parameters -cp $docCp -d $docClasses $docFiles
-    if ($LASTEXITCODE -ne 0) { throw "helios-document compilation failed" }
+    $out3 = & $javac -nowarn -Xlint:none -parameters -cp $docCp -d $docClasses $docFiles 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "helios-document compilation failed: $out3" }
     Write-Host "helios-document compiled successfully."
 
     # 2d. Compile helios-docgen
@@ -75,8 +75,8 @@ Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
     $docgenCp = "C:\tomcat11-docgen\webapps\helios-docgen\WEB-INF\lib\*;C:\tomcat11-docgen\lib\*;$servlet"
 
     Write-Host "Compiling $($docgenFiles.Count) Java files for helios-docgen..."
-    & $javac -parameters -cp $docgenCp -d $docgenClasses $docgenFiles
-    if ($LASTEXITCODE -ne 0) { throw "helios-docgen compilation failed" }
+    $out4 = & $javac -nowarn -Xlint:none -parameters -cp $docgenCp -d $docgenClasses $docgenFiles 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "helios-docgen compilation failed: $out4" }
     Write-Host "helios-docgen compiled successfully."
 
     # 2e. Deploy classes

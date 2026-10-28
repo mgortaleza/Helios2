@@ -43,6 +43,16 @@ export function DepartmentProvider({ children }) {
     activeDepartment === DEPARTMENTS.UNDERWRITING || activeDepartment === DEPARTMENTS.CLAIMS
   );
 
+  const resolveUwRoute = useCallback(() => {
+    const raw = (currentUser?.defaultTier2NavUw || 'submissions').trim();
+    return raw.startsWith('/') ? raw : `/${raw}`;
+  }, [currentUser]);
+
+  const resolveClaimsRoute = useCallback(() => {
+    const raw = (currentUser?.defaultTier2NavClaims || 'claims').trim();
+    return raw.startsWith('/') ? raw : `/${raw}`;
+  }, [currentUser]);
+
   // On Login or User Switch: Immediately reset Tier 1 & Tier 2 navigation to the user's role default
   useEffect(() => {
     if (!currentUser) {
@@ -61,12 +71,12 @@ export function DepartmentProvider({ children }) {
         setActiveDepartmentState(DEPARTMENTS.UNDERWRITING);
         setIsTier2Open(true);
         setIsTier1Collapsed(true);
-        navigate('/submissions', { replace: true });
+        navigate(resolveUwRoute(), { replace: true });
       } else if (targetDept === DEPARTMENTS.CLAIMS) {
         setActiveDepartmentState(DEPARTMENTS.CLAIMS);
         setIsTier2Open(true);
         setIsTier1Collapsed(true);
-        navigate('/claims', { replace: true });
+        navigate(resolveClaimsRoute(), { replace: true });
       } else {
         setActiveDepartmentState(DEPARTMENTS.DASHBOARD);
         setIsTier2Open(false);
@@ -74,7 +84,7 @@ export function DepartmentProvider({ children }) {
         navigate('/', { replace: true });
       }
     }
-  }, [currentUser, navigate]);
+  }, [currentUser, navigate, resolveUwRoute, resolveClaimsRoute]);
 
   // Synchronize department state with in-session route changes
   useEffect(() => {
@@ -116,14 +126,14 @@ export function DepartmentProvider({ children }) {
       } else if (nextDept === DEPARTMENTS.UNDERWRITING) {
         setIsTier2Open(true);
         setIsTier1Collapsed(true);
-        if (redirect) navigate('/submissions');
+        if (redirect) navigate(resolveUwRoute());
       } else if (nextDept === DEPARTMENTS.CLAIMS) {
         setIsTier2Open(true);
         setIsTier1Collapsed(true);
-        if (redirect) navigate('/claims');
+        if (redirect) navigate(resolveClaimsRoute());
       }
     },
-    [navigate]
+    [navigate, resolveUwRoute, resolveClaimsRoute]
   );
 
   const toggleTier1 = useCallback(() => {
@@ -144,6 +154,8 @@ export function DepartmentProvider({ children }) {
     isTier2Open,
     setIsTier2Open,
     toggleTier2,
+    resolveUwRoute,
+    resolveClaimsRoute,
     departments: DEPARTMENTS
   };
 

@@ -223,6 +223,9 @@ public class HeliosService {
             String roleName,
             String department,
             String defaultTier1Nav,
+            String defaultTier2NavUw,
+            String defaultTier2NavClaims,
+            String allowedTier2Nav,
             String authProvider,
             String externalSubjectId,
             boolean active,
@@ -1471,6 +1474,27 @@ public class HeliosService {
         }
     }
 
+    public String resolveDefaultTier2Uw(int tenantId, String roleCode) {
+        if (tenantRegistryService != null) {
+            return tenantRegistryService.getDefaultTier2UwForRole(tenantId, roleCode);
+        }
+        return "submissions";
+    }
+
+    public String resolveDefaultTier2Claims(int tenantId, String roleCode) {
+        if (tenantRegistryService != null) {
+            return tenantRegistryService.getDefaultTier2ClaimsForRole(tenantId, roleCode);
+        }
+        return "claims";
+    }
+
+    public String resolveAllowedTier2(int tenantId, String roleCode) {
+        if (tenantRegistryService != null) {
+            return tenantRegistryService.getAllowedTier2ForRole(tenantId, roleCode);
+        }
+        return "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs";
+    }
+
     public String resolveDefaultTier1(int tenantId, String roleCode) {
         if (tenantRegistryService != null) {
             return tenantRegistryService.getDefaultTier1ForRole(tenantId, roleCode);
@@ -1518,6 +1542,9 @@ public class HeliosService {
                     resolveRoleName(rs.getString("ROLE_CODE")),
                     rs.getString("DEPARTMENT"),
                     resolveDefaultTier1(tenantId, rs.getString("ROLE_CODE")),
+                    resolveDefaultTier2Uw(tenantId, rs.getString("ROLE_CODE")),
+                    resolveDefaultTier2Claims(tenantId, rs.getString("ROLE_CODE")),
+                    resolveAllowedTier2(tenantId, rs.getString("ROLE_CODE")),
                     rs.getString("AUTH_PROVIDER") != null ? rs.getString("AUTH_PROVIDER") : "LOCAL",
                     rs.getString("EXTERNAL_SUBJECT_ID"),
                     rs.getBoolean("IS_ACTIVE"),
@@ -1586,6 +1613,9 @@ public class HeliosService {
                         resolveRoleName(user.roleCode()),
                         user.department(),
                         (user.defaultTier1Nav() != null && !user.defaultTier1Nav().isBlank()) ? user.defaultTier1Nav() : resolveDefaultTier1(user.tenantId(), user.roleCode()),
+                        (user.defaultTier2NavUw() != null && !user.defaultTier2NavUw().isBlank()) ? user.defaultTier2NavUw() : resolveDefaultTier2Uw(user.tenantId(), user.roleCode()),
+                        (user.defaultTier2NavClaims() != null && !user.defaultTier2NavClaims().isBlank()) ? user.defaultTier2NavClaims() : resolveDefaultTier2Claims(user.tenantId(), user.roleCode()),
+                        (user.allowedTier2Nav() != null && !user.allowedTier2Nav().isBlank()) ? user.allowedTier2Nav() : resolveAllowedTier2(user.tenantId(), user.roleCode()),
                         user.authProvider() != null ? user.authProvider() : "LOCAL",
                         user.externalSubjectId(),
                         user.active(),
@@ -1669,6 +1699,9 @@ public class HeliosService {
                     resolveRoleName((String) userMap.get("roleCode")),
                     (String) userMap.get("department"),
                     resolveDefaultTier1((int) userMap.get("tenantId"), (String) userMap.get("roleCode")),
+                    resolveDefaultTier2Uw((int) userMap.get("tenantId"), (String) userMap.get("roleCode")),
+                    resolveDefaultTier2Claims((int) userMap.get("tenantId"), (String) userMap.get("roleCode")),
+                    resolveAllowedTier2((int) userMap.get("tenantId"), (String) userMap.get("roleCode")),
                     (String) userMap.get("authProvider"),
                     (String) userMap.get("externalSubjectId"),
                     (boolean) userMap.get("active"),

@@ -23,11 +23,6 @@ import { QuoteList, QuoteShow, NestedQuotesView } from './resources/quotes.jsx';
 import { DocumentList, DocumentShow, NestedDocumentsView } from './resources/documents.jsx';
 import { FormList, FormShow, NestedFormsView } from './resources/forms.jsx';
 import {
-  DecPageTemplateList,
-  DecPageTemplateShow,
-  DecPageTemplateCreate
-} from './resources/decPageTemplates.jsx';
-import {
   ClaimList,
   ClaimShow,
   ClaimsFnolView,
@@ -263,13 +258,6 @@ function AppShell() {
           name="forms"
           list={FormList}
           show={FormShow}
-        />
-        <Resource
-          name="dec-page-templates"
-          list={DecPageTemplateList}
-          show={DecPageTemplateShow}
-          create={DecPageTemplateCreate}
-          options={{ label: 'Dec Page Templates' }}
         />
         <Resource
           name="claims"

@@ -115,6 +115,21 @@ public class TenantRegistryService {
                     BEGIN
                         ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD DEFAULT_TIER1_NAV VARCHAR(50) NULL;
                     END
+
+                    IF COL_LENGTH('dbo.TENANT_ROLE_CONFIG', 'DEFAULT_TIER2_NAV_UW') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD DEFAULT_TIER2_NAV_UW VARCHAR(50) NULL;
+                    END
+
+                    IF COL_LENGTH('dbo.TENANT_ROLE_CONFIG', 'DEFAULT_TIER2_NAV_CLAIMS') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD DEFAULT_TIER2_NAV_CLAIMS VARCHAR(50) NULL;
+                    END
+
+                    IF COL_LENGTH('dbo.TENANT_ROLE_CONFIG', 'ALLOWED_TIER2_NAV') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD ALLOWED_TIER2_NAV VARCHAR(500) NULL;
+                    END
                     """);
 
             masterJdbcTemplate.execute("""
@@ -125,6 +140,17 @@ public class TenantRegistryService {
                         ELSE 'dashboard'
                     END
                     WHERE DEFAULT_TIER1_NAV IS NULL;
+
+                    UPDATE dbo.TENANT_ROLE_CONFIG
+                    SET DEFAULT_TIER2_NAV_UW = COALESCE(DEFAULT_TIER2_NAV_UW, 'submissions'),
+                        DEFAULT_TIER2_NAV_CLAIMS = COALESCE(DEFAULT_TIER2_NAV_CLAIMS, 'claims'),
+                        ALLOWED_TIER2_NAV = COALESCE(ALLOWED_TIER2_NAV, CASE
+                            WHEN UPPER(ROLE_CODE) LIKE '%UNDERWRITER%' OR UPPER(ROLE_CODE) = 'UW' THEN 'inbox,policies,submissions'
+                            WHEN UPPER(ROLE_CODE) LIKE '%CLAIM%' THEN 'claims,claims/fnol,claims/open,claims/loss-runs'
+                            WHEN UPPER(ROLE_CODE) LIKE '%AUDITOR%' THEN 'policies,submissions,claims,claims/loss-runs'
+                            ELSE 'inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs'
+                        END)
+                    WHERE DEFAULT_TIER2_NAV_UW IS NULL OR DEFAULT_TIER2_NAV_CLAIMS IS NULL OR ALLOWED_TIER2_NAV IS NULL;
                     """);
 
             seedDefaultRolesForTenant(1);
@@ -144,13 +170,15 @@ public class TenantRegistryService {
         if (count != null && count == 0) {
             String insertSql = """
                     INSERT INTO dbo.TENANT_ROLE_CONFIG
-                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV,
+                     DEFAULT_TIER2_NAV_UW, DEFAULT_TIER2_NAV_CLAIMS, ALLOWED_TIER2_NAV,
+                     CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """;
-            masterJdbcTemplate.update(insertSql, tenantId, "EXECUTIVE", "Portfolio Executive", "dashboard,policy,submissions,claims", "", "dashboard", true, true, true);
-            masterJdbcTemplate.update(insertSql, tenantId, "UNDERWRITER", "Senior Underwriter", "dashboard,policy,submissions", "Underwriting", "underwriting", true, true, false);
-            masterJdbcTemplate.update(insertSql, tenantId, "CLAIMS_ADJUSTER", "Claims Adjuster", "dashboard,policy,claims", "Claims", "claims", false, false, true);
-            masterJdbcTemplate.update(insertSql, tenantId, "AUDITOR", "Compliance Auditor (Read-Only)", "dashboard,policy,submissions,claims", "", "dashboard", false, false, false);
+            masterJdbcTemplate.update(insertSql, tenantId, "EXECUTIVE", "Portfolio Executive", "dashboard,policy,submissions,claims", "", "dashboard", "submissions", "claims", "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs", true, true, true);
+            masterJdbcTemplate.update(insertSql, tenantId, "UNDERWRITER", "Senior Underwriter", "dashboard,policy,submissions", "Underwriting", "underwriting", "submissions", "claims", "inbox,policies,submissions", true, true, false);
+            masterJdbcTemplate.update(insertSql, tenantId, "CLAIMS_ADJUSTER", "Claims Adjuster", "dashboard,policy,claims", "Claims", "claims", "submissions", "claims", "claims,claims/fnol,claims/open,claims/loss-runs", false, false, true);
+            masterJdbcTemplate.update(insertSql, tenantId, "AUDITOR", "Compliance Auditor (Read-Only)", "dashboard,policy,submissions,claims", "", "dashboard", "policies", "claims/loss-runs", "policies,submissions,claims,claims/loss-runs", false, false, false);
         }
     }
 
@@ -162,6 +190,9 @@ public class TenantRegistryService {
             String allowedModules,
             String defaultTaskFilter,
             String defaultTier1Nav,
+            String defaultTier2NavUw,
+            String defaultTier2NavClaims,
+            String allowedTier2Nav,
             boolean canCreateSubmission,
             boolean canAddOrganization,
             boolean canReportClaim
@@ -176,6 +207,9 @@ public class TenantRegistryService {
             rs.getString("ALLOWED_MODULES"),
             rs.getString("DEFAULT_TASK_FILTER") != null ? rs.getString("DEFAULT_TASK_FILTER") : "",
             rs.getString("DEFAULT_TIER1_NAV") != null ? rs.getString("DEFAULT_TIER1_NAV") : "dashboard",
+            rs.getString("DEFAULT_TIER2_NAV_UW") != null ? rs.getString("DEFAULT_TIER2_NAV_UW") : "submissions",
+            rs.getString("DEFAULT_TIER2_NAV_CLAIMS") != null ? rs.getString("DEFAULT_TIER2_NAV_CLAIMS") : "claims",
+            rs.getString("ALLOWED_TIER2_NAV") != null ? rs.getString("ALLOWED_TIER2_NAV") : "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs",
             rs.getBoolean("CAN_CREATE_SUBMISSION"),
             rs.getBoolean("CAN_ADD_ORGANIZATION"),
             rs.getBoolean("CAN_REPORT_CLAIM")
@@ -185,7 +219,8 @@ public class TenantRegistryService {
         ensureMasterUiColumns();
         seedDefaultRolesForTenant(tenantId);
         String sql = "SELECT ROLE_ID, TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, "
-                   + "DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM "
+                   + "DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, DEFAULT_TIER2_NAV_UW, DEFAULT_TIER2_NAV_CLAIMS, ALLOWED_TIER2_NAV, "
+                   + "CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM "
                    + "FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? ORDER BY ROLE_ID ASC";
         return masterJdbcTemplate.query(sql, ROLE_ROW_MAPPER, tenantId);
     }
@@ -195,11 +230,22 @@ public class TenantRegistryService {
         String defaultTier1 = (role.defaultTier1Nav() != null && !role.defaultTier1Nav().isBlank())
                 ? role.defaultTier1Nav()
                 : "dashboard";
+        String defaultTier2Uw = (role.defaultTier2NavUw() != null && !role.defaultTier2NavUw().isBlank())
+                ? role.defaultTier2NavUw()
+                : "submissions";
+        String defaultTier2Claims = (role.defaultTier2NavClaims() != null && !role.defaultTier2NavClaims().isBlank())
+                ? role.defaultTier2NavClaims()
+                : "claims";
+        String allowedTier2 = (role.allowedTier2Nav() != null && !role.allowedTier2Nav().isBlank())
+                ? role.allowedTier2Nav()
+                : "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs";
+
         if (role.roleId() > 0) {
             masterJdbcTemplate.update("""
                     UPDATE dbo.TENANT_ROLE_CONFIG
                     SET TENANT_ID = ?, ROLE_CODE = ?, ROLE_NAME = ?, ALLOWED_MODULES = ?,
                         DEFAULT_TASK_FILTER = ?, DEFAULT_TIER1_NAV = ?,
+                        DEFAULT_TIER2_NAV_UW = ?, DEFAULT_TIER2_NAV_CLAIMS = ?, ALLOWED_TIER2_NAV = ?,
                         CAN_CREATE_SUBMISSION = ?, CAN_ADD_ORGANIZATION = ?, CAN_REPORT_CLAIM = ?
                     WHERE ROLE_ID = ?
                     """,
@@ -209,6 +255,9 @@ public class TenantRegistryService {
                     role.allowedModules(),
                     role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
                     defaultTier1,
+                    defaultTier2Uw,
+                    defaultTier2Claims,
+                    allowedTier2,
                     role.canCreateSubmission(),
                     role.canAddOrganization(),
                     role.canReportClaim(),
@@ -222,6 +271,9 @@ public class TenantRegistryService {
                     role.allowedModules(),
                     role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
                     defaultTier1,
+                    defaultTier2Uw,
+                    defaultTier2Claims,
+                    allowedTier2,
                     role.canCreateSubmission(),
                     role.canAddOrganization(),
                     role.canReportClaim()
@@ -229,8 +281,10 @@ public class TenantRegistryService {
         } else {
             masterJdbcTemplate.update("""
                     INSERT INTO dbo.TENANT_ROLE_CONFIG
-                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV,
+                     DEFAULT_TIER2_NAV_UW, DEFAULT_TIER2_NAV_CLAIMS, ALLOWED_TIER2_NAV,
+                     CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     role.tenantId(),
                     role.roleCode(),
@@ -238,6 +292,9 @@ public class TenantRegistryService {
                     role.allowedModules(),
                     role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
                     defaultTier1,
+                    defaultTier2Uw,
+                    defaultTier2Claims,
+                    allowedTier2,
                     role.canCreateSubmission(),
                     role.canAddOrganization(),
                     role.canReportClaim()
@@ -245,6 +302,64 @@ public class TenantRegistryService {
             List<TenantRoleDto> roles = getRolesForTenant(role.tenantId());
             return roles.isEmpty() ? role : roles.get(roles.size() - 1);
         }
+    }
+
+    public String getDefaultTier2UwForRole(int tenantId, String roleCode) {
+        if (roleCode == null || roleCode.isBlank()) {
+            return "submissions";
+        }
+        try {
+            ensureMasterUiColumns();
+            String sql = "SELECT DEFAULT_TIER2_NAV_UW FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? AND UPPER(ROLE_CODE) = UPPER(?)";
+            List<String> list = masterJdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("DEFAULT_TIER2_NAV_UW"), tenantId, roleCode.trim());
+            if (!list.isEmpty() && list.get(0) != null && !list.get(0).isBlank()) {
+                return list.get(0);
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        return "submissions";
+    }
+
+    public String getDefaultTier2ClaimsForRole(int tenantId, String roleCode) {
+        if (roleCode == null || roleCode.isBlank()) {
+            return "claims";
+        }
+        try {
+            ensureMasterUiColumns();
+            String sql = "SELECT DEFAULT_TIER2_NAV_CLAIMS FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? AND UPPER(ROLE_CODE) = UPPER(?)";
+            List<String> list = masterJdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("DEFAULT_TIER2_NAV_CLAIMS"), tenantId, roleCode.trim());
+            if (!list.isEmpty() && list.get(0) != null && !list.get(0).isBlank()) {
+                return list.get(0);
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        return "claims";
+    }
+
+    public String getAllowedTier2ForRole(int tenantId, String roleCode) {
+        if (roleCode == null || roleCode.isBlank()) {
+            return "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs";
+        }
+        try {
+            ensureMasterUiColumns();
+            String sql = "SELECT ALLOWED_TIER2_NAV FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? AND UPPER(ROLE_CODE) = UPPER(?)";
+            List<String> list = masterJdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("ALLOWED_TIER2_NAV"), tenantId, roleCode.trim());
+            if (!list.isEmpty() && list.get(0) != null && !list.get(0).isBlank()) {
+                return list.get(0);
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        String upper = roleCode.toUpperCase();
+        if (upper.contains("UNDERWRITER") || upper.equals("UW")) {
+            return "inbox,policies,submissions";
+        }
+        if (upper.contains("CLAIM")) {
+            return "claims,claims/fnol,claims/open,claims/loss-runs";
+        }
+        return "inbox,policies,submissions,claims,claims/fnol,claims/open,claims/loss-runs";
     }
 
     public String getDefaultTier1ForRole(int tenantId, String roleCode) {
