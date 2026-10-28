@@ -591,7 +591,7 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
             />
           </Box>
 
-          {/* External Action Toolbar */}
+          {/* External Action Toolbar - Sticky pinned so actions remain visible when scrolling */}
           <Box
             sx={{
               display: 'flex',
@@ -600,10 +600,16 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
               mb: 2,
               p: 1.5,
               borderRadius: 2,
-              bgcolor: selectedDocs.length > 0 ? '#f0f9ff' : '#f8fafc',
-              border: selectedDocs.length > 0 ? '1px solid #7dd3fc' : '1px dashed #cbd5e1',
+              bgcolor: selectedDocs.length > 0 ? '#f0f9ff' : '#ffffff',
+              border: selectedDocs.length > 0 ? '1px solid #7dd3fc' : '1px solid #e2e8f0',
               flexWrap: 'wrap',
-              gap: 1.5
+              gap: 1.5,
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              boxShadow: selectedDocs.length > 0
+                ? '0 4px 12px rgba(2, 132, 199, 0.12)'
+                : '0 2px 4px rgba(15, 23, 42, 0.04)'
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -728,12 +734,39 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
             </Box>
           </Box>
 
-          {/* Documents Table */}
-          <TableContainer component={Paper} elevation={0} variant="outlined" sx={{ borderRadius: 1.5 }}>
-            <Table size="small">
-              <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+          {/* Documents Table - Dedicated scroll bar so action section remains in view */}
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            variant="outlined"
+            sx={{
+              borderRadius: 1.5,
+              maxHeight: 'calc(100vh - 380px)',
+              minHeight: 400,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              border: '1px solid #e2e8f0',
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px'
+              },
+              '&::-webkit-scrollbar-track': {
+                backgroundColor: '#f8fafc',
+                borderRadius: '4px'
+              },
+              '&::-webkit-scrollbar-thumb': {
+                backgroundColor: '#cbd5e1',
+                borderRadius: '4px',
+                '&:hover': {
+                  backgroundColor: '#94a3b8'
+                }
+              }
+            }}
+          >
+            <Table size="small" stickyHeader>
+              <TableHead sx={{ '& th': { bgcolor: '#f8fafc', fontWeight: 700 } }}>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 700, width: 60 }}>ID</TableCell>
+                  <TableCell sx={{ width: 60 }}>ID</TableCell>
                   <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }}>
                     <Checkbox
                       size="small"
@@ -744,11 +777,11 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                       inputProps={{ 'aria-label': 'Clear selection' }}
                     />
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Document Title &amp; File</TableCell>
-                  <TableCell sx={{ fontWeight: 700, width: 220 }}>Folder Group / Batch</TableCell>
-                  <TableCell sx={{ fontWeight: 700, width: 160 }}>Received Date</TableCell>
-                  <TableCell sx={{ fontWeight: 700, width: 100 }}>Size</TableCell>
-                  <TableCell sx={{ fontWeight: 700, width: 140 }}>Status</TableCell>
+                  <TableCell>Document Title &amp; File</TableCell>
+                  <TableCell sx={{ width: 220 }}>Folder Group / Batch</TableCell>
+                  <TableCell sx={{ width: 160 }}>Received Date</TableCell>
+                  <TableCell sx={{ width: 100 }}>Size</TableCell>
+                  <TableCell sx={{ width: 140 }}>Status</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
