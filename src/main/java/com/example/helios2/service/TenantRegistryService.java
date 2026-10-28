@@ -105,10 +105,24 @@ public class TenantRegistryService {
                         ROLE_NAME VARCHAR(100) NOT NULL,
                         ALLOWED_MODULES VARCHAR(200) NOT NULL,
                         DEFAULT_TASK_FILTER VARCHAR(50) NULL,
+                        DEFAULT_TIER1_NAV VARCHAR(50) NULL,
                         CAN_CREATE_SUBMISSION BIT NOT NULL DEFAULT 1,
                         CAN_ADD_ORGANIZATION BIT NOT NULL DEFAULT 1,
                         CAN_REPORT_CLAIM BIT NOT NULL DEFAULT 1
                     );
+
+                    IF COL_LENGTH('dbo.TENANT_ROLE_CONFIG', 'DEFAULT_TIER1_NAV') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD DEFAULT_TIER1_NAV VARCHAR(50) NULL;
+                    END
+
+                    UPDATE dbo.TENANT_ROLE_CONFIG
+                    SET DEFAULT_TIER1_NAV = CASE
+                        WHEN UPPER(ROLE_CODE) LIKE '%UNDERWRITER%' OR UPPER(ROLE_CODE) = 'UW' THEN 'underwriting'
+                        WHEN UPPER(ROLE_CODE) LIKE '%CLAIM%' THEN 'claims'
+                        ELSE 'dashboard'
+                    END
+                    WHERE DEFAULT_TIER1_NAV IS NULL;
                     """);
 
             seedDefaultRolesForTenant(1);
@@ -128,13 +142,13 @@ public class TenantRegistryService {
         if (count != null && count == 0) {
             String insertSql = """
                     INSERT INTO dbo.TENANT_ROLE_CONFIG
-                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """;
-            masterJdbcTemplate.update(insertSql, tenantId, "EXECUTIVE", "Portfolio Executive", "dashboard,policy,submissions,claims", "", true, true, true);
-            masterJdbcTemplate.update(insertSql, tenantId, "UNDERWRITER", "Senior Underwriter", "dashboard,policy,submissions", "Underwriting", true, true, false);
-            masterJdbcTemplate.update(insertSql, tenantId, "CLAIMS_ADJUSTER", "Claims Adjuster", "dashboard,policy,claims", "Claims", false, false, true);
-            masterJdbcTemplate.update(insertSql, tenantId, "AUDITOR", "Compliance Auditor (Read-Only)", "dashboard,policy,submissions,claims", "", false, false, false);
+            masterJdbcTemplate.update(insertSql, tenantId, "EXECUTIVE", "Portfolio Executive", "dashboard,policy,submissions,claims", "", "dashboard", true, true, true);
+            masterJdbcTemplate.update(insertSql, tenantId, "UNDERWRITER", "Senior Underwriter", "dashboard,policy,submissions", "Underwriting", "underwriting", true, true, false);
+            masterJdbcTemplate.update(insertSql, tenantId, "CLAIMS_ADJUSTER", "Claims Adjuster", "dashboard,policy,claims", "Claims", "claims", false, false, true);
+            masterJdbcTemplate.update(insertSql, tenantId, "AUDITOR", "Compliance Auditor (Read-Only)", "dashboard,policy,submissions,claims", "", "dashboard", false, false, false);
         }
     }
 
@@ -145,6 +159,7 @@ public class TenantRegistryService {
             String roleName,
             String allowedModules,
             String defaultTaskFilter,
+            String defaultTier1Nav,
             boolean canCreateSubmission,
             boolean canAddOrganization,
             boolean canReportClaim
@@ -158,6 +173,7 @@ public class TenantRegistryService {
             rs.getString("ROLE_NAME"),
             rs.getString("ALLOWED_MODULES"),
             rs.getString("DEFAULT_TASK_FILTER") != null ? rs.getString("DEFAULT_TASK_FILTER") : "",
+            rs.getString("DEFAULT_TIER1_NAV") != null ? rs.getString("DEFAULT_TIER1_NAV") : "dashboard",
             rs.getBoolean("CAN_CREATE_SUBMISSION"),
             rs.getBoolean("CAN_ADD_ORGANIZATION"),
             rs.getBoolean("CAN_REPORT_CLAIM")
@@ -167,18 +183,22 @@ public class TenantRegistryService {
         ensureMasterUiColumns();
         seedDefaultRolesForTenant(tenantId);
         String sql = "SELECT ROLE_ID, TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, "
-                   + "DEFAULT_TASK_FILTER, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM "
+                   + "DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM "
                    + "FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? ORDER BY ROLE_ID ASC";
         return masterJdbcTemplate.query(sql, ROLE_ROW_MAPPER, tenantId);
     }
 
     public TenantRoleDto saveRoleForTenant(TenantRoleDto role) {
         ensureMasterUiColumns();
+        String defaultTier1 = (role.defaultTier1Nav() != null && !role.defaultTier1Nav().isBlank())
+                ? role.defaultTier1Nav()
+                : "dashboard";
         if (role.roleId() > 0) {
             masterJdbcTemplate.update("""
                     UPDATE dbo.TENANT_ROLE_CONFIG
                     SET TENANT_ID = ?, ROLE_CODE = ?, ROLE_NAME = ?, ALLOWED_MODULES = ?,
-                        DEFAULT_TASK_FILTER = ?, CAN_CREATE_SUBMISSION = ?, CAN_ADD_ORGANIZATION = ?, CAN_REPORT_CLAIM = ?
+                        DEFAULT_TASK_FILTER = ?, DEFAULT_TIER1_NAV = ?,
+                        CAN_CREATE_SUBMISSION = ?, CAN_ADD_ORGANIZATION = ?, CAN_REPORT_CLAIM = ?
                     WHERE ROLE_ID = ?
                     """,
                     role.tenantId(),
@@ -186,23 +206,36 @@ public class TenantRegistryService {
                     role.roleName(),
                     role.allowedModules(),
                     role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
+                    defaultTier1,
                     role.canCreateSubmission(),
                     role.canAddOrganization(),
                     role.canReportClaim(),
                     role.roleId()
             );
-            return role;
+            return new TenantRoleDto(
+                    role.roleId(),
+                    role.tenantId(),
+                    role.roleCode(),
+                    role.roleName(),
+                    role.allowedModules(),
+                    role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
+                    defaultTier1,
+                    role.canCreateSubmission(),
+                    role.canAddOrganization(),
+                    role.canReportClaim()
+            );
         } else {
             masterJdbcTemplate.update("""
                     INSERT INTO dbo.TENANT_ROLE_CONFIG
-                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (TENANT_ID, ROLE_CODE, ROLE_NAME, ALLOWED_MODULES, DEFAULT_TASK_FILTER, DEFAULT_TIER1_NAV, CAN_CREATE_SUBMISSION, CAN_ADD_ORGANIZATION, CAN_REPORT_CLAIM)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     role.tenantId(),
                     role.roleCode(),
                     role.roleName(),
                     role.allowedModules(),
                     role.defaultTaskFilter() != null ? role.defaultTaskFilter() : "",
+                    defaultTier1,
                     role.canCreateSubmission(),
                     role.canAddOrganization(),
                     role.canReportClaim()
@@ -210,6 +243,30 @@ public class TenantRegistryService {
             List<TenantRoleDto> roles = getRolesForTenant(role.tenantId());
             return roles.isEmpty() ? role : roles.get(roles.size() - 1);
         }
+    }
+
+    public String getDefaultTier1ForRole(int tenantId, String roleCode) {
+        if (roleCode == null || roleCode.isBlank()) {
+            return "dashboard";
+        }
+        try {
+            ensureMasterUiColumns();
+            String sql = "SELECT DEFAULT_TIER1_NAV FROM dbo.TENANT_ROLE_CONFIG WHERE TENANT_ID = ? AND UPPER(ROLE_CODE) = UPPER(?)";
+            List<String> list = masterJdbcTemplate.query(sql, (rs, rowNum) -> rs.getString("DEFAULT_TIER1_NAV"), tenantId, roleCode.trim());
+            if (!list.isEmpty() && list.get(0) != null && !list.get(0).isBlank()) {
+                return list.get(0);
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        String upper = roleCode.toUpperCase();
+        if (upper.contains("UNDERWRITER") || upper.equals("UW")) {
+            return "underwriting";
+        }
+        if (upper.contains("CLAIM")) {
+            return "claims";
+        }
+        return "dashboard";
     }
 
     public List<TenantConfig> getAllTenants() {

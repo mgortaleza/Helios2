@@ -488,3 +488,4 @@ export function LoginPage({ onLoginSuccess, tenants: propTenants = [], inactivit
 }
 
 export default LoginPage;
+

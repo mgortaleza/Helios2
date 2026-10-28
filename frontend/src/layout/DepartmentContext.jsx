@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth, resolveUserDefaultTier1 } from '../authContext.jsx';
 
 export const DEPARTMENTS = {
   DASHBOARD: 'dashboard',
@@ -23,21 +24,28 @@ const DepartmentReactContext = createContext({
 export function DepartmentProvider({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+  const hasAppliedDefaultRef = useRef(false);
+
+  const initialDefault = resolveUserDefaultTier1(currentUser);
 
   const [activeDepartment, setActiveDepartmentState] = useState(() => {
-    const path = (window.location.hash || window.location.pathname || '').toLowerCase();
-    if (path.includes('claims')) return DEPARTMENTS.CLAIMS;
-    if (
-      path.includes('policies') ||
-      path.includes('submissions') ||
-      path.includes('inbox') ||
-      path.includes('quotes') ||
-      path.includes('documents') ||
-      path.includes('forms')
-    ) {
-      return DEPARTMENTS.UNDERWRITING;
+    const rawPath = (window.location.hash || window.location.pathname || '').toLowerCase();
+    const isRoot = rawPath === '/' || rawPath === '' || rawPath === '#/' || rawPath === '#';
+    if (!isRoot) {
+      if (rawPath.includes('claims')) return DEPARTMENTS.CLAIMS;
+      if (
+        rawPath.includes('policies') ||
+        rawPath.includes('submissions') ||
+        rawPath.includes('inbox') ||
+        rawPath.includes('quotes') ||
+        rawPath.includes('documents') ||
+        rawPath.includes('forms')
+      ) {
+        return DEPARTMENTS.UNDERWRITING;
+      }
     }
-    return DEPARTMENTS.DASHBOARD;
+    return initialDefault;
   });
 
   // Controls whether the primary vertical nav bar is slim/collapsed (68px) or expanded (240px)
@@ -50,7 +58,34 @@ export function DepartmentProvider({ children }) {
     activeDepartment === DEPARTMENTS.UNDERWRITING || activeDepartment === DEPARTMENTS.CLAIMS
   );
 
-  // Synchronize department state with the route automatically
+  // Automatically apply role's customizable default Tier 1 selection when landing on root
+  useEffect(() => {
+    if (!currentUser) return;
+    const rawPath = (location.pathname || '') + (location.hash || '');
+    const isRoot = rawPath === '/' || rawPath === '' || rawPath === '#/' || rawPath === '#';
+
+    if (isRoot && !hasAppliedDefaultRef.current) {
+      hasAppliedDefaultRef.current = true;
+      const targetDept = resolveUserDefaultTier1(currentUser);
+      if (targetDept === DEPARTMENTS.UNDERWRITING) {
+        setActiveDepartmentState(DEPARTMENTS.UNDERWRITING);
+        setIsTier2Open(true);
+        setIsTier1Collapsed(true);
+        navigate('/submissions', { replace: true });
+      } else if (targetDept === DEPARTMENTS.CLAIMS) {
+        setActiveDepartmentState(DEPARTMENTS.CLAIMS);
+        setIsTier2Open(true);
+        setIsTier1Collapsed(true);
+        navigate('/claims', { replace: true });
+      } else {
+        setActiveDepartmentState(DEPARTMENTS.DASHBOARD);
+        setIsTier2Open(false);
+        setIsTier1Collapsed(false);
+      }
+    }
+  }, [currentUser, location.pathname, location.hash, navigate]);
+
+  // Synchronize department state with route changes
   useEffect(() => {
     const rawPath = (location.pathname || '') + (location.hash || '');
     const path = rawPath.toLowerCase();
@@ -71,6 +106,7 @@ export function DepartmentProvider({ children }) {
       setIsTier2Open(true);
       setIsTier1Collapsed(true);
     } else if (path === '/' || path === '' || path === '#/' || path === '#') {
+      // If user navigated back to root dashboard explicitly
       setActiveDepartmentState(DEPARTMENTS.DASHBOARD);
       setIsTier2Open(false);
       setIsTier1Collapsed(false);

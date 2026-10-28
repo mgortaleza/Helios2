@@ -3,11 +3,24 @@ import { setGlobalTenantId } from './tenantContext.jsx';
 
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
+export function resolveUserDefaultTier1(user) {
+  if (!user) return 'dashboard';
+  const raw = (user.defaultTier1Nav || '').toLowerCase().trim();
+  if (raw === 'underwriting' || raw === 'claims' || raw === 'dashboard') {
+    return raw;
+  }
+  const role = (user.roleCode || '').toUpperCase();
+  if (role.includes('UNDERWRITER') || role === 'UW') return 'underwriting';
+  if (role.includes('CLAIM')) return 'claims';
+  return 'dashboard';
+}
+
 const AuthContext = createContext({
   currentUser: null,
   sessionNotice: null,
   login: () => {},
-  logout: () => {}
+  logout: () => {},
+  resolveUserDefaultTier1
 });
 
 export function AuthProvider({ children }) {
@@ -46,8 +59,41 @@ export function AuthProvider({ children }) {
     }
   });
 
-  const login = useCallback((user, tenantId) => {
-    const userWithTenant = { ...user, tenantId: Number(tenantId) };
+  const login = useCallback(async (user, tenantId) => {
+    let resolvedTier1 = user?.defaultTier1Nav;
+
+    // If defaultTier1Nav is not on user payload, dynamically fetch roles from tenant config
+    if (!resolvedTier1) {
+      try {
+        const res = await fetch(`/api/roles?tenantId=${tenantId}`, {
+          headers: { 'X-Tenant-ID': String(tenantId) }
+        });
+        if (res.ok) {
+          const roles = await res.json();
+          if (Array.isArray(roles)) {
+            const matchedRole = roles.find(
+              (r) => (r.roleCode || '').toUpperCase() === (user?.roleCode || '').toUpperCase()
+            );
+            if (matchedRole && matchedRole.defaultTier1Nav) {
+              resolvedTier1 = matchedRole.defaultTier1Nav;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch role defaultTier1Nav:', e);
+      }
+    }
+
+    if (!resolvedTier1) {
+      resolvedTier1 = resolveUserDefaultTier1(user);
+    }
+
+    const userWithTenant = {
+      ...user,
+      tenantId: Number(tenantId),
+      defaultTier1Nav: resolvedTier1
+    };
+
     setCurrentUser(userWithTenant);
     setGlobalTenantId(Number(tenantId));
     setSessionNotice(null);
@@ -118,3 +164,4 @@ export function AuthProvider({ children }) {
 export function useAuth() {
   return useContext(AuthContext);
 }
+
