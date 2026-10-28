@@ -47,10 +47,14 @@ export function DocumentPreviewPage() {
 
   // Apply payload received from parent / storage / broadcast
   const handleApplyPayload = useCallback((payload) => {
-    if (!payload || !Array.isArray(payload.docs) || payload.docs.length === 0) {
+    if (!payload || !Array.isArray(payload.docs)) {
       return;
     }
     setDocs(payload.docs);
+    if (payload.docs.length === 0) {
+      setActiveIndex(0);
+      return;
+    }
     const validIdx = typeof payload.activeIndex === 'number' && payload.activeIndex >= 0 && payload.activeIndex < payload.docs.length
       ? payload.activeIndex
       : 0;
@@ -653,3 +657,4 @@ export function DocumentPreviewPage() {
 }
 
 export default DocumentPreviewPage;
+

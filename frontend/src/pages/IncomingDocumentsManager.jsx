@@ -292,30 +292,57 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
     return items;
   }, [filteredDocs]);
 
-  const handleToggleParent = (parentDoc, children) => {
+  const handleToggleParent = (parentDoc, children = []) => {
     const familyIds = [parentDoc.incomingId, ...children.map((c) => c.incomingId)];
-    const isFamilyAllSelected = familyIds.every((id) => selectedDocIds.includes(id));
+    const familySet = new Set(familyIds);
 
-    if (isFamilyAllSelected) {
-      const toRemove = new Set(familyIds);
-      setSelectedDocIds((prev) => prev.filter((id) => !toRemove.has(id)));
-    } else {
-      setSelectedDocIds((prev) => Array.from(new Set([...prev, ...familyIds])));
-    }
+    setSelectedDocIds((prev) => {
+      // If any other documents outside this parent & child group were selected,
+      // deselect all other selections and select ONLY this group
+      const hasOtherGroups = prev.some((id) => !familySet.has(id));
+      if (hasOtherGroups) {
+        return familyIds;
+      }
+      // If already solely within this family:
+      // If all members are selected, toggle off (deselect); otherwise select all in this family
+      const isFamilyAllSelected = familyIds.every((id) => prev.includes(id));
+      return isFamilyAllSelected ? [] : familyIds;
+    });
   };
 
-  const handleToggleChild = (childDoc) => {
+  const handleToggleChild = (childDoc, parentDoc, children = []) => {
     const childId = childDoc.incomingId;
-    setSelectedDocIds((prev) =>
-      prev.includes(childId) ? prev.filter((id) => id !== childId) : [...prev, childId]
-    );
+    const familyIds = parentDoc
+      ? [parentDoc.incomingId, ...children.map((c) => c.incomingId)]
+      : [childId];
+    const familySet = new Set(familyIds);
+
+    setSelectedDocIds((prev) => {
+      // If documents outside this parent & child group were selected,
+      // deselect all other selections and select only this child in this family
+      const hasOtherGroups = prev.some((id) => !familySet.has(id));
+      if (hasOtherGroups) {
+        return [childId];
+      }
+      // If already within this group, toggle this child
+      return prev.includes(childId)
+        ? prev.filter((id) => id !== childId)
+        : [...prev, childId];
+    });
   };
 
   const handleToggleSingle = (doc) => {
     const id = doc.incomingId;
-    setSelectedDocIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setSelectedDocIds((prev) => {
+      // If other documents outside this standalone document are selected,
+      // deselect all others and select only this one
+      const hasOtherDocs = prev.some((x) => x !== id);
+      if (hasOtherDocs) {
+        return [id];
+      }
+      // If already only this document is selected, toggle off
+      return prev.includes(id) ? [] : [id];
+    });
   };
 
   const selectedDocs = useMemo(() => {
@@ -366,6 +393,28 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
       setPreviewDoc(docsToPreview[validIndex] || docsToPreview[0]);
     }
   }, [tenantId]);
+
+  // Real-time synchronization with detached 2nd-screen preview window
+  // Whenever user selects another group of files in the inbox, update the active preview window
+  useEffect(() => {
+    if (selectedDocs.length > 0) {
+      const payload = {
+        docs: selectedDocs,
+        activeIndex: 0,
+        tenantId: tenantId,
+        timestamp: Date.now()
+      };
+      try {
+        localStorage.setItem('helios_doc_preview_payload', JSON.stringify(payload));
+      } catch (e) {}
+
+      try {
+        const channel = new BroadcastChannel('helios_doc_preview_channel');
+        channel.postMessage({ type: 'UPDATE_PREVIEW', ...payload });
+        setTimeout(() => channel.close(), 100);
+      } catch (e) {}
+    }
+  }, [selectedDocs, tenantId]);
 
   const totalSelectedBytes = useMemo(() => {
     return selectedDocs.reduce((acc, d) => acc + (d.fileSizeBytes || 0), 0);
@@ -688,15 +737,11 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                   <TableCell sx={{ width: 44, p: 0.5, textAlign: 'center' }}>
                     <Checkbox
                       size="small"
-                      indeterminate={selectedDocIds.length > 0 && selectedDocIds.length < filteredDocs.length}
-                      checked={filteredDocs.length > 0 && selectedDocIds.length === filteredDocs.length}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedDocIds(filteredDocs.map((d) => d.incomingId));
-                        } else {
-                          setSelectedDocIds([]);
-                        }
-                      }}
+                      indeterminate={selectedDocIds.length > 0}
+                      checked={false}
+                      disabled={selectedDocIds.length === 0}
+                      onChange={() => setSelectedDocIds([])}
+                      inputProps={{ 'aria-label': 'Clear selection' }}
                     />
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Document Title &amp; File</TableCell>
@@ -746,12 +791,9 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                             selected={isHighlight}
                             onClick={() => handleToggleParent(parentDoc, children)}
                             onDoubleClick={() => {
-                              if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === parentDoc.incomingId)) {
-                                const idx = selectedDocs.findIndex((d) => d.incomingId === parentDoc.incomingId);
-                                handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
-                              } else {
-                                handleOpenPreview([parentDoc], 0);
-                              }
+                              const familyDocs = [parentDoc, ...children];
+                              setSelectedDocIds(familyDocs.map((d) => d.incomingId));
+                              handleOpenPreview(familyDocs, 0);
                             }}
                             sx={{
                               cursor: 'pointer',
@@ -853,14 +895,12 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                                   key={child.incomingId}
                                   hover
                                   selected={isChildSelected}
-                                  onClick={() => handleToggleChild(child)}
+                                  onClick={() => handleToggleChild(child, parentDoc, children)}
                                   onDoubleClick={() => {
-                                    if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === child.incomingId)) {
-                                      const idx = selectedDocs.findIndex((d) => d.incomingId === child.incomingId);
-                                      handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
-                                    } else {
-                                      handleOpenPreview([child], 0);
-                                    }
+                                    const familyDocs = [parentDoc, ...children];
+                                    const idx = familyDocs.findIndex((d) => d.incomingId === child.incomingId);
+                                    setSelectedDocIds(familyDocs.map((d) => d.incomingId));
+                                    handleOpenPreview(familyDocs, idx >= 0 ? idx : 0);
                                   }}
                                   sx={{
                                     cursor: 'pointer',
@@ -876,7 +916,7 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                                     <Checkbox
                                       size="small"
                                       checked={isChildSelected}
-                                      onChange={() => handleToggleChild(child)}
+                                      onChange={() => handleToggleChild(child, parentDoc, children)}
                                     />
                                   </TableCell>
                                   <TableCell sx={{ py: 0.8 }}>
@@ -939,12 +979,8 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                         selected={isSelected}
                         onClick={() => handleToggleSingle(doc)}
                         onDoubleClick={() => {
-                          if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === doc.incomingId)) {
-                            const idx = selectedDocs.findIndex((d) => d.incomingId === doc.incomingId);
-                            handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
-                          } else {
-                            handleOpenPreview([doc], 0);
-                          }
+                          setSelectedDocIds([doc.incomingId]);
+                          handleOpenPreview([doc], 0);
                         }}
                         sx={{
                           cursor: 'pointer',
