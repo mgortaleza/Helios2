@@ -25,10 +25,98 @@ function paginateRecords(records, pagination) {
 async function fetchMappedResource(resource, queryFilter = '') {
   if (resource === 'submissions') {
     const data = await apiFetch('/api/submissions');
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
-      id: item.submsnId
+      id: item.submsnId ?? item.id
     }));
+  }
+
+  if (resource === 'policies') {
+    const data = await apiFetch('/api/policies');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.policyId ?? item.id
+    }));
+  }
+
+  if (resource === 'quotes') {
+    const data = await apiFetch('/api/quotes');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.quoteId ?? item.id
+    }));
+  }
+
+  if (resource === 'claims') {
+    const data = await apiFetch('/api/claims');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.claimId ?? item.id
+    }));
+  }
+
+  if (resource === 'documents') {
+    try {
+      const data = await apiFetch('/api/documents');
+      return (Array.isArray(data) ? data : []).map((item) => ({
+        ...item,
+        id: item.documentId ?? item.docId ?? item.id
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  if (resource === 'inbox' || resource === 'incoming') {
+    try {
+      const data = await apiFetch('/api/documents/incoming');
+      return (Array.isArray(data) ? data : []).map((item) => ({
+        ...item,
+        id: item.incomingId ?? item.id
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  if (resource === 'products') {
+    return [
+      { id: 1, name: 'Commercial Property (CP)' },
+      { id: 2, name: 'Commercial General Liability (CGL)' },
+      { id: 3, name: 'Medical Malpractice (MED_MAL)' },
+      { id: 4, name: 'Technology Errors & Omissions (TECH_EO)' },
+      { id: 5, name: 'Business Owners Policy (BOP)' },
+      { id: 6, name: 'Commercial Auto (CA)' }
+    ];
+  }
+
+  if (resource === 'dec-page-templates') {
+    try {
+      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
+      const res = await fetch('/document-api/dec-page-templates', {
+        headers: {
+          'X-Tenant-Id': String(tenantId)
+        }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (Array.isArray(data) ? data : []).map((item) => ({
+        ...item,
+        id: item.id
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  if (resource === 'forms') {
+    return [
+      { id: 1, formCode: 'ACORD-125', formName: 'Commercial Insurance Application', category: 'General Liability', version: '2025.1', status: 'Active' },
+      { id: 2, formCode: 'ACORD-126', formName: 'Commercial General Liability Section', category: 'General Liability', version: '2025.1', status: 'Active' },
+      { id: 3, formCode: 'ACORD-140', formName: 'Property Section Application', category: 'Commercial Property', version: '2024.3', status: 'Active' },
+      { id: 4, formCode: 'ACORD-130', formName: 'Workers Compensation Application', category: 'Workers Comp', version: '2025.2', status: 'Active' },
+      { id: 5, formCode: 'HELIOS-SOV-01', formName: 'Schedule of Values & Loss History', category: 'Property', version: '2026.1', status: 'Active' }
+    ];
   }
 
   if (resource === 'parties') {
@@ -36,7 +124,7 @@ async function fetchMappedResource(resource, queryFilter = '') {
       ? `/api/parties?q=${encodeURIComponent(queryFilter)}`
       : '/api/parties';
     const data = await apiFetch(url);
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
       id: item.id,
       orgName: item.name
@@ -45,13 +133,13 @@ async function fetchMappedResource(resource, queryFilter = '') {
 
   if (resource === 'tenants') {
     const data = await apiFetch('/api/tenants');
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
       id: item.tenantId
     }));
   }
 
-  throw new Error(`Unsupported resource: ${resource}`);
+  return [];
 }
 
 export const dataProvider = {
@@ -110,6 +198,17 @@ export const dataProvider = {
   },
 
   getOne: async (resource, params) => {
+    if (resource === 'dec-page-templates') {
+      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
+      const res = await fetch(`/document-api/dec-page-templates/${params.id}`, {
+        headers: {
+          'X-Tenant-Id': String(tenantId)
+        }
+      });
+      if (!res.ok) throw new Error(`Dec Page Template #${params.id} not found`);
+      const data = await res.json();
+      return { data: { ...data, id: data.id } };
+    }
     const records = await fetchMappedResource(resource);
     const match = records.find((r) => String(r.id) === String(params.id));
     if (!match) {
@@ -149,6 +248,34 @@ export const dataProvider = {
 
   create: async (resource, params) => {
     const { data } = params;
+
+    if (resource === 'dec-page-templates') {
+      const formData = new FormData();
+      const rawFile = data.file?.rawFile || (data.file instanceof File ? data.file : null);
+      if (rawFile) {
+        formData.append('file', rawFile);
+      }
+      formData.append('form_id', data.form_id || data.formId || '');
+      formData.append('form_revision', data.form_revision || data.formRevision || '');
+      formData.append('form_name', data.form_name || data.formName || '');
+      formData.append('effective_date', data.effective_date || data.effectiveDate || '');
+      formData.append('product_id', String(data.product_id || data.productId || '1'));
+
+      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
+      const res = await fetch('/document-api/dec-page-templates', {
+        method: 'POST',
+        headers: {
+          'X-Tenant-Id': String(tenantId)
+        },
+        body: formData
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(err.error || 'Failed to upload declaration page template');
+      }
+      const created = await res.json();
+      return { data: { ...created, id: created.id } };
+    }
 
     if (resource === 'submissions') {
       const partyId = Number(data.partyId ?? data.insuredPid);
@@ -231,7 +358,19 @@ export const dataProvider = {
   },
 
   updateMany: async () => ({ data: [] }),
-  delete: async () => ({ data: {} }),
+  delete: async (resource, params) => {
+    if (resource === 'dec-page-templates') {
+      const tenantId = (typeof window !== 'undefined' && window.localStorage?.getItem('helios2_tenantId')) || 1;
+      await fetch(`/document-api/dec-page-templates/${params.id}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Tenant-Id': String(tenantId)
+        }
+      });
+      return { data: { id: params.id } };
+    }
+    return { data: {} };
+  },
   deleteMany: async () => ({ data: [] }),
 
   getDiagnostics: async () => {

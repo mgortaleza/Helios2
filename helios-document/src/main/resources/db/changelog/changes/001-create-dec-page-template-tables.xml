@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="001-create-dec-page-template" author="helios">
+        <createTable tableName="dec_page_template">
+            <column name="id" type="BIGINT" autoIncrement="true">
+                <constraints primaryKey="true" primaryKeyName="PK_dec_page_template" nullable="false"/>
+            </column>
+            <column name="form_id" type="VARCHAR(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="form_revision" type="VARCHAR(20)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="form_name" type="NVARCHAR(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="effective_date" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="product_id" type="INT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="file_storage_path" type="NVARCHAR(500)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="DATETIME2" defaultValueComputed="GETDATE()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="DATETIME2" defaultValueComputed="GETDATE()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <addUniqueConstraint tableName="dec_page_template"
+                             columnNames="form_id, form_revision"
+                             constraintName="UQ_dec_page_template_form_rev"/>
+
+        <createIndex tableName="dec_page_template" indexName="IX_dec_page_template_product">
+            <column name="product_id"/>
+            <column name="effective_date"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="002-create-dec-page-template-field" author="helios">
+        <createTable tableName="dec_page_template_field">
+            <column name="id" type="BIGINT" autoIncrement="true">
+                <constraints primaryKey="true" primaryKeyName="PK_dec_page_template_field" nullable="false"/>
+            </column>
+            <column name="template_id" type="BIGINT">
+                <constraints nullable="false"
+                             foreignKeyName="FK_dec_field_template"
+                             references="dec_page_template(id)"
+                             deleteCascade="true"/>
+            </column>
+            <column name="field_name" type="VARCHAR(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="DATETIME2" defaultValueComputed="GETDATE()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="dec_page_template_field" indexName="IX_dec_field_template_id">
+            <column name="template_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
+

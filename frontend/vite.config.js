@@ -10,6 +10,11 @@ export default defineConfig({
         target: 'http://localhost:8081',
         changeOrigin: true
       },
+      '/document-api': {
+        target: 'http://10.1.10.56/document-api',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/document-api/, '')
+      },
       '/rating-api': {
         target: 'http://localhost:8084/helios-rating/api/v1',
         changeOrigin: true,
@@ -18,4 +23,3 @@ export default defineConfig({
     }
   }
 });
-

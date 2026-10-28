@@ -39,7 +39,8 @@ import {
   Alert,
   CircularProgress,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  FormHelperText
 } from '@mui/material';
 import {
   Palette,
@@ -76,11 +77,14 @@ import {
   GitFork,
   Save,
   Trash2,
-  Inbox
+  Inbox,
+  LayoutGrid,
+  FileCode
 } from 'lucide-react';
 
 import RuleFlowStudio from './RuleFlowStudio';
 import DroolsRuleFlowStudio from './DroolsRuleFlowStudio';
+import DecPageTemplateManager from './DecPageTemplateManager';
 import TemplateAdminManager from './TemplateAdminManager';
 import IncomingDocumentsManager from './IncomingDocumentsManager';
 
@@ -298,6 +302,7 @@ export default function App() {
     roleName: '',
     allowedModules: 'dashboard,policy,submissions,claims',
     defaultTaskFilter: '',
+    defaultTier1Nav: 'dashboard',
     canCreateSubmission: true,
     canAddOrganization: true,
     canReportClaim: true
@@ -887,6 +892,7 @@ export default function App() {
       roleName: role.roleName,
       allowedModules: role.allowedModules || 'dashboard,policy,submissions,claims',
       defaultTaskFilter: role.defaultTaskFilter || '',
+      defaultTier1Nav: role.defaultTier1Nav || 'dashboard',
       canCreateSubmission: Boolean(role.canCreateSubmission),
       canAddOrganization: Boolean(role.canAddOrganization),
       canReportClaim: Boolean(role.canReportClaim)
@@ -902,6 +908,7 @@ export default function App() {
       roleName: '',
       allowedModules: 'dashboard,policy,submissions',
       defaultTaskFilter: '',
+      defaultTier1Nav: 'underwriting',
       canCreateSubmission: true,
       canAddOrganization: true,
       canReportClaim: false
@@ -925,7 +932,8 @@ export default function App() {
           ...roleForm,
           tenantId: Number(roleForm.tenantId),
           roleCode: roleForm.roleCode.trim().toUpperCase(),
-          roleName: roleForm.roleName.trim()
+          roleName: roleForm.roleName.trim(),
+          defaultTier1Nav: roleForm.defaultTier1Nav || 'dashboard'
         })
       });
       setOpenRoleDialog(false);
@@ -944,8 +952,8 @@ export default function App() {
     { id: 'rating', label: 'Rating & State Filings', icon: <Calculator size={18} /> },
     { id: 'drools-ruleflow', label: 'Drools RuleFlow Studio', icon: <Zap size={18} /> },
     { id: 'ruleflow', label: 'RuleFlow Studio & BRMS', icon: <GitFork size={18} /> },
-    { id: 'intake', label: 'Document Intake', icon: <Inbox size={18} /> },
-    { id: 'templates', label: 'Document Templates (Aspose)', icon: <FileText size={18} /> },
+    { id: 'dec-templates', label: 'Dec Page Templates', icon: <FileCode size={18} /> },
+    { id: 'templates', label: 'Endorsement Templates', icon: <FileText size={18} /> },
     { id: 'diagnostics', label: 'Services & System Diagnostics', icon: <Activity size={18} /> }
   ];
 
@@ -1260,6 +1268,7 @@ export default function App() {
                           <TableRow>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ROLE CODE</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ROLE NAME</TableCell>
+                            <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>DEFAULT TIER 1 (NAV)</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ALLOWED SIDEBAR TABS</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>DEFAULT TASK QUEUE</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ACTION PERMISSIONS</TableCell>
@@ -1273,6 +1282,45 @@ export default function App() {
                                 <code>{r.roleCode}</code>
                               </TableCell>
                               <TableCell sx={{ fontWeight: 600 }}>{r.roleName}</TableCell>
+                              <TableCell>
+                                {r.defaultTier1Nav === 'underwriting' ? (
+                                  <Chip
+                                    icon={<ShieldCheck size={14} color="#0284c7" />}
+                                    label="Underwriting"
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#e0f2fe',
+                                      color: '#0369a1',
+                                      fontWeight: 700,
+                                      fontSize: '0.72rem'
+                                    }}
+                                  />
+                                ) : r.defaultTier1Nav === 'claims' ? (
+                                  <Chip
+                                    icon={<AlertCircle size={14} color="#d97706" />}
+                                    label="Claims"
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#fef3c7',
+                                      color: '#b45309',
+                                      fontWeight: 700,
+                                      fontSize: '0.72rem'
+                                    }}
+                                  />
+                                ) : (
+                                  <Chip
+                                    icon={<LayoutGrid size={14} color="#475569" />}
+                                    label="Dashboard"
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#f1f5f9',
+                                      color: '#334155',
+                                      fontWeight: 700,
+                                      fontSize: '0.72rem'
+                                    }}
+                                  />
+                                )}
+                              </TableCell>
                               <TableCell>
                                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                                   {(r.allowedModules || '').split(',').map((m) => (
@@ -2451,13 +2499,12 @@ export default function App() {
                 </Box>
               )}
 
-              {/* TAB: INCOMING DOCUMENTS INTAKE QUEUE */}
-              {activeTab === 'intake' && (
-                <IncomingDocumentsManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
+              {/* TAB 5.5: WORD TEMPLATE INGESTION & ASPOSE PDF GENERATION */}
+              {activeTab === 'dec-templates' && (
+                <DecPageTemplateManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}
 
-              {/* TAB 5.5: WORD TEMPLATE INGESTION & ASPOSE PDF GENERATION */}
-              {activeTab === 'templates' && (
+              {(activeTab === 'templates' || activeTab === 'endorsements') && (
                 <TemplateAdminManager apiFetch={apiFetch} selectedTenantId={selectedTenantId} />
               )}
 
@@ -2734,6 +2781,38 @@ export default function App() {
                 />
               </Grid>
             </Grid>
+
+            <FormControl fullWidth size="small">
+              <InputLabel id="default-tier1-select-label">Default Navigation Selection (Tier 1)</InputLabel>
+              <Select
+                labelId="default-tier1-select-label"
+                label="Default Navigation Selection (Tier 1)"
+                value={roleForm.defaultTier1Nav || 'dashboard'}
+                onChange={(e) => setRoleForm({ ...roleForm, defaultTier1Nav: e.target.value })}
+              >
+                <MenuItem value="dashboard">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LayoutGrid size={16} color="#334155" />
+                    <span>Dashboard (Executive Portfolio & Activity)</span>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="underwriting">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ShieldCheck size={16} color="#0284c7" />
+                    <span>Underwriting (Policies, Submissions, Document Inbox)</span>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="claims">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <AlertCircle size={16} color="#d97706" />
+                    <span>Claims (Claims Registry, FNOL Intake, Open Claims)</span>
+                  </Box>
+                </MenuItem>
+              </Select>
+              <FormHelperText>
+                Default Tier 1 navigation tab and workspace loaded automatically when users with this role log in.
+              </FormHelperText>
+            </FormControl>
 
             <FormControl fullWidth size="small">
               <InputLabel>Default Dashboard Task Filter</InputLabel>

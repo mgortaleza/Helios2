@@ -422,6 +422,7 @@ public class HeliosController {
                 user.roleCode(),
                 user.roleName(),
                 user.department(),
+                user.defaultTier1Nav(),
                 user.authProvider(),
                 user.externalSubjectId(),
                 user.active(),
