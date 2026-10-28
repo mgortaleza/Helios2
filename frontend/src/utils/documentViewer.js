@@ -10,18 +10,40 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
   const rawList = (Array.isArray(docs) ? docs : [docs]).filter(Boolean);
   if (rawList.length === 0) return null;
 
+  const resolvedTenantId = String(tenantId || 1);
+
   // Normalize document fields so that incoming, repository, and dynamically generated docs all work
   const normalizedDocs = rawList.map((d, idx) => {
-    const docName = d.documentName || d.fileName || d.title || d.form_name || `Document #${d.id || d.documentId || idx + 1}`;
+    const docName = d.documentName || d.fileName || d.title || d.form_name || `Document #${d.incomingId || d.documentId || d.id || idx + 1}`;
     const fName = d.fileName || (d.documentName ? (d.documentName.endsWith('.pdf') ? d.documentName : `${d.documentName}.pdf`) : 'document.pdf');
+
+    let previewUrl = d.previewUrl || null;
+    let downloadUrl = d.downloadUrl || null;
+
+    if (d.incomingId) {
+      // Inbox incoming document (exact path)
+      previewUrl = `/document-api/documents/incoming/${d.incomingId}/preview?tenantId=${resolvedTenantId}#toolbar=1`;
+      downloadUrl = `/document-api/documents/incoming/${d.incomingId}/download?tenantId=${resolvedTenantId}`;
+    } else if (d.templateId) {
+      // Dec page template test preview
+      previewUrl = `/document-api/dec-page-templates/${d.templateId}/preview-test?tenantId=${resolvedTenantId}&t=${Date.now()}#toolbar=1`;
+      downloadUrl = `/document-api/dec-page-templates/${d.templateId}/preview-test?tenantId=${resolvedTenantId}&download=true`;
+    } else if (d.documentId || d.id) {
+      // Formal repository document
+      const docId = d.documentId || d.id;
+      previewUrl = `/document-api/documents/${docId}/preview?tenantId=${resolvedTenantId}#toolbar=1`;
+      downloadUrl = `/document-api/documents/${docId}/download?tenantId=${resolvedTenantId}`;
+    }
+
     return {
       ...d,
       documentName: docName,
       fileName: fName,
       incomingId: d.incomingId || null,
       documentId: d.documentId || d.id || null,
-      previewUrl: d.previewUrl || d.blobUrl || d.url || null,
-      downloadUrl: d.downloadUrl || d.blobUrl || null,
+      templateId: d.templateId || null,
+      previewUrl: previewUrl,
+      downloadUrl: downloadUrl,
       fileSizeBytes: d.fileSizeBytes || d.size || d.file_size || 0,
       mimeType: d.mimeType || d.fileExtension || 'application/pdf',
       status: d.status || 'READY'
@@ -32,7 +54,7 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
   const payload = {
     docs: normalizedDocs,
     activeIndex: validIndex,
-    tenantId: String(tenantId || 1),
+    tenantId: resolvedTenantId,
     timestamp: Date.now()
   };
 
@@ -59,7 +81,7 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
 
   // 4. Open or focus the named popup window
   // If running on admin port 8090, target the underwriting app port 80 where the preview route lives
-  let previewUrl = `${window.location.origin}${window.location.pathname}#/document-preview`;
+  let previewUrl = `${window.location.origin}/#/document-preview`;
   if (window.location.port === '8090') {
     previewUrl = `http://${window.location.hostname}:80/#/document-preview`;
   }
@@ -78,4 +100,3 @@ export function openDocumentViewer(docs, initialIndex = 0, tenantId = 1) {
 
   return popup;
 }
-

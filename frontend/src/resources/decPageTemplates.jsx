@@ -474,15 +474,18 @@ export function DecPageTemplateShow() {
         filename = match[1].replace(/['"]/g, '').trim();
       }
 
-      // Create active blob URL for viewing and downloading
-      const blobUrl = window.URL.createObjectURL(blob);
+      // Construct test document record with live preview endpoint
+      const previewUrl = `/document-api/dec-page-templates/${id}/preview-test?tenantId=${tenantId}&t=${Date.now()}#toolbar=1`;
+      const downloadUrl = `/document-api/dec-page-templates/${id}/preview-test?tenantId=${tenantId}&download=true`;
+
       const generatedDocRecord = {
-        documentName: filename,
+        templateId: id,
+        documentName: `Test Dec Page - ${template?.form_id || id}`,
         fileName: filename,
         fileSizeBytes: blob.size,
         mimeType: 'application/pdf',
-        previewUrl: blobUrl,
-        downloadUrl: blobUrl,
+        previewUrl: previewUrl,
+        downloadUrl: downloadUrl,
         status: 'TEST_GENERATED'
       };
       setLastGeneratedDoc(generatedDocRecord);
@@ -490,12 +493,14 @@ export function DecPageTemplateShow() {
       // Launch in the document inbox viewer
       openDocumentViewer(generatedDocRecord, 0, tenantId);
 
-      // Trigger browser download
+      // Trigger automatic browser download
+      const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
+      window.URL.revokeObjectURL(blobUrl);
       document.body.removeChild(a);
 
       notify('Populated Test Dec Page (.pdf) generated, opened in Document Viewer, and downloaded!', { type: 'success' });

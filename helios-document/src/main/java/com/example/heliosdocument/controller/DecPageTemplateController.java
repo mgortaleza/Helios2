@@ -187,6 +187,41 @@ public class DecPageTemplateController {
     }
 
     /**
+     * Preview endpoint for the document inbox viewer:
+     * Serves inline application/pdf for direct iframe rendering.
+     */
+    @GetMapping("/{id}/preview-test")
+    public ResponseEntity<?> previewTestDecPage(
+            @PathVariable("id") Long id,
+            @RequestParam(value = "download", defaultValue = "false") boolean download,
+            @RequestHeader(value = "X-Tenant-Id", required = false) String tenantHeader,
+            @RequestParam(value = "tenantId", required = false) Integer queryTenantId
+    ) {
+        int tenantId = queryTenantId != null && queryTenantId > 0 ? queryTenantId : resolveTenantId(tenantHeader);
+        try {
+            DecPageTemplateService.GeneratedDocResult result = service.getOrGenerateTestDecPage(tenantId, id);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_PDF);
+            if (download) {
+                headers.setContentDispositionFormData("attachment", result.fileName());
+            } else {
+                headers.add(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + result.fileName() + "\"");
+            }
+            headers.setContentLength(result.docxBytes().length);
+            headers.add("Access-Control-Expose-Headers", "Content-Disposition");
+
+            return new ResponseEntity<>(result.docxBytes(), headers, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            log.warn("Validation error on test preview: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Failed to preview test Dec Page for template #{}: {}", id, e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Preview failed: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Delete template.
      */
     @DeleteMapping("/{id}")

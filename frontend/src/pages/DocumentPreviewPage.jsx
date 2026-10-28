@@ -37,6 +37,11 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+function getDocKey(doc, idx) {
+  if (!doc) return `doc-${idx}`;
+  return doc.incomingId || doc.documentId || doc.id || (doc.templateId ? `tpl-${doc.templateId}` : null) || `doc-${idx}-${doc.fileName || doc.documentName || ''}`;
+}
+
 export function DocumentPreviewPage() {
   const [docs, setDocs] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -197,33 +202,62 @@ export function DocumentPreviewPage() {
 
   const previewSrc = useMemo(() => {
     if (!activeDoc) return '';
-    if (activeDoc.previewUrl) return activeDoc.previewUrl;
-    if (activeDoc.blobUrl) return activeDoc.blobUrl;
-    if (activeDoc.url) return activeDoc.url;
+    // Priority 1: Inbox incoming document (EXACT existing path so inbox NEVER breaks)
     if (activeDoc.incomingId) {
       return `/document-api/documents/incoming/${activeDoc.incomingId}/preview?tenantId=${tenantId}#toolbar=1`;
     }
+    // Priority 2: Dec Page template test
+    if (activeDoc.templateId) {
+      return `/document-api/dec-page-templates/${activeDoc.templateId}/preview-test?tenantId=${tenantId}&t=${activeDoc.timestamp || Date.now()}#toolbar=1`;
+    }
+    // Priority 3: Direct server preview URL if provided
+    if (activeDoc.previewUrl && !activeDoc.previewUrl.startsWith('blob:')) {
+      return activeDoc.previewUrl.includes('#') ? activeDoc.previewUrl : `${activeDoc.previewUrl}#toolbar=1`;
+    }
+    // Priority 4: Formal repository document
     const docId = activeDoc.documentId || activeDoc.id;
     if (docId) {
       return `/document-api/documents/${docId}/preview?tenantId=${tenantId}#toolbar=1`;
     }
+    // Priority 5: Fallback to blobUrl or previewUrl if present
+    if (activeDoc.previewUrl) return activeDoc.previewUrl;
+    if (activeDoc.blobUrl) return activeDoc.blobUrl;
     return '';
   }, [activeDoc, tenantId]);
 
   const downloadUrl = useMemo(() => {
     if (!activeDoc) return '';
-    if (activeDoc.downloadUrl) return activeDoc.downloadUrl;
-    if (activeDoc.blobUrl) return activeDoc.blobUrl;
-    if (activeDoc.previewUrl) return activeDoc.previewUrl;
+    // Priority 1: Inbox incoming document
     if (activeDoc.incomingId) {
       return `/document-api/documents/incoming/${activeDoc.incomingId}/download?tenantId=${tenantId}`;
     }
+    // Priority 2: Dec Page template test
+    if (activeDoc.templateId) {
+      return `/document-api/dec-page-templates/${activeDoc.templateId}/preview-test?tenantId=${tenantId}&download=true`;
+    }
+    // Priority 3: Formal repository document
     const docId = activeDoc.documentId || activeDoc.id;
     if (docId) {
       return `/document-api/documents/${docId}/download?tenantId=${tenantId}`;
     }
+    // Priority 4: Direct download URL if provided
+    if (activeDoc.downloadUrl && !activeDoc.downloadUrl.startsWith('blob:')) {
+      return activeDoc.downloadUrl;
+    }
+    // Priority 5: Fallback to downloadUrl/blobUrl
+    if (activeDoc.downloadUrl) return activeDoc.downloadUrl;
+    if (activeDoc.blobUrl) return activeDoc.blobUrl;
     return '';
   }, [activeDoc, tenantId]);
+
+  // Ensure loading overlay automatically clears to prevent getting stuck
+  useEffect(() => {
+    setFrameLoading(true);
+    const timer = setTimeout(() => {
+      setFrameLoading(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [previewSrc]);
 
   return (
     <Box
@@ -498,15 +532,16 @@ export function DocumentPreviewPage() {
                   </Typography>
                 </Box>
               ) : (
-                filteredDocs.map((doc) => {
-                  const actualIdx = docs.findIndex((d) => d.incomingId === doc.incomingId);
+                filteredDocs.map((doc, fIdx) => {
+                  const docKey = getDocKey(doc, fIdx);
+                  const actualIdx = docs.findIndex((d, idx) => getDocKey(d, idx) === docKey);
                   const isSelected = actualIdx === activeIndex;
 
                   return (
                     <Paper
-                      key={doc.incomingId}
+                      key={docKey}
                       elevation={isSelected ? 2 : 0}
-                      onClick={() => handleSelectDoc(actualIdx)}
+                      onClick={() => handleSelectDoc(actualIdx >= 0 ? actualIdx : fIdx)}
                       sx={{
                         p: 1.25,
                         cursor: 'pointer',
@@ -642,13 +677,13 @@ export function DocumentPreviewPage() {
                 >
                   <CircularProgress size={36} sx={{ color: '#38bdf8' }} />
                   <Typography variant="body2" sx={{ color: '#e2e8f0', fontWeight: 600 }}>
-                    Loading document #{activeDoc.incomingId}...
+                    Loading {activeDoc.documentName || activeDoc.fileName || 'document'}...
                   </Typography>
                 </Box>
               )}
 
               <iframe
-                key={`${activeDoc.incomingId}-${tenantId}`}
+                key={`${getDocKey(activeDoc, activeIndex)}-${tenantId}-${previewSrc}`}
                 src={previewSrc}
                 title={activeDoc.documentName || activeDoc.fileName}
                 width="100%"

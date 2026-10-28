@@ -197,6 +197,17 @@ public class DecPageTemplateService {
         return mapToDto(saved);
     }
 
+    private final Map<String, GeneratedDocResult> lastGeneratedTestCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public GeneratedDocResult getOrGenerateTestDecPage(int tenantId, Long templateId) throws Exception {
+        String cacheKey = tenantId + ":" + templateId;
+        GeneratedDocResult cached = lastGeneratedTestCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        return generateTestDecPage(tenantId, templateId, new DecPageGenerateTestRequest());
+    }
+
     /**
      * Generation Engine:
      * - Populates coverages supporting both:
@@ -406,8 +417,10 @@ public class DecPageTemplateService {
                 template.getFormId().replaceAll("[^a-zA-Z0-9-_]", "_"),
                 template.getFormRevision().replaceAll("[^a-zA-Z0-9-_]", "_"));
 
+        GeneratedDocResult result = new GeneratedDocResult(downloadFileName, pdfBytes);
+        lastGeneratedTestCache.put(tenantId + ":" + templateId, result);
         log.info("Successfully generated PDF Dec Page ({} bytes) for template ID: {}", pdfBytes.length, templateId);
-        return new GeneratedDocResult(downloadFileName, pdfBytes);
+        return result;
     }
 
     private String getFieldVal(Map<String, Object> cov, Map<String, Object> flatFields, String... candidateKeys) {

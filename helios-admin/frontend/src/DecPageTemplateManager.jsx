@@ -338,14 +338,17 @@ export default function DecPageTemplateManager({ apiFetch, selectedTenantId = 1 
         filename = match[1].replace(/['"]/g, '').trim();
       }
 
-      const blobUrl = window.URL.createObjectURL(blob);
+      const previewUrl = `/document-api/dec-page-templates/${selectedTemplate.id}/preview-test?tenantId=${selectedTenantId || 1}&t=${Date.now()}#toolbar=1`;
+      const downloadUrl = `/document-api/dec-page-templates/${selectedTemplate.id}/preview-test?tenantId=${selectedTenantId || 1}&download=true`;
+
       const generatedDocRecord = {
-        documentName: filename,
+        templateId: selectedTemplate.id,
+        documentName: `Test Dec Page - ${selectedTemplate.form_id}`,
         fileName: filename,
         fileSizeBytes: blob.size,
         mimeType: 'application/pdf',
-        previewUrl: blobUrl,
-        downloadUrl: blobUrl,
+        previewUrl: previewUrl,
+        downloadUrl: downloadUrl,
         status: 'TEST_GENERATED'
       };
       setLastGeneratedDoc(generatedDocRecord);
@@ -354,11 +357,13 @@ export default function DecPageTemplateManager({ apiFetch, selectedTenantId = 1 
       openDocumentViewer(generatedDocRecord, 0, selectedTenantId || 1);
 
       // Trigger automatic browser download
+      const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
+      window.URL.revokeObjectURL(blobUrl);
       document.body.removeChild(a);
 
       showToast('Populated Test Dec Page (.pdf) generated, opened in Document Viewer, and downloaded!', 'success');
