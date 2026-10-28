@@ -8130,7 +8130,7 @@ const LoginView = ({ onLoginSuccess, tenants = [], inactivityMessage = null }) =
             Select your tenant directory and enter your account username.
           </Typography>
 
-          {inactivityMessage && (
+          {typeof inactivityMessage === 'string' && inactivityMessage.trim() ? (
             <Alert
               severity="warning"
               icon={<Clock size={18} />}
@@ -8138,7 +8138,7 @@ const LoginView = ({ onLoginSuccess, tenants = [], inactivityMessage = null }) =
             >
               {inactivityMessage}
             </Alert>
-          )}
+          ) : null}
 
           {error && (
             <Alert severity="error" sx={{ mb: 2.5, borderRadius: 1.5 }} onClose={() => setError(null)}>
@@ -8488,8 +8488,11 @@ export default function App() {
     } catch {}
     setCurrentUser(null);
     setActiveTenantId(1);
-    if (reason) {
+    setActiveView('dashboard');
+    if (typeof reason === 'string' && reason.trim()) {
       setSessionNotice(reason);
+    } else {
+      setSessionNotice(null);
     }
     try {
       localStorage.removeItem('helios_auth_user');
@@ -9018,7 +9021,7 @@ export default function App() {
               <IconButton
                 size="small"
                 title="Sign Out"
-                onClick={handleLogout}
+                onClick={() => handleLogout()}
                 sx={{ color: 'rgba(255,255,255,0.7)', '&:hover': { color: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)' } }}
               >
                 <LogOut size={16} />
@@ -9180,7 +9183,12 @@ export default function App() {
                     <ListItemIcon><ShieldCheck size={16} /></ListItemIcon>
                     <ListItemText primary="Switch Active Role" />
                   </MenuItem>
-                  <MenuItem onClick={handleLogout}>
+                  <MenuItem
+                    onClick={() => {
+                      setUserMenuAnchor(null);
+                      handleLogout();
+                    }}
+                  >
                     <ListItemIcon><LogOut size={16} color="#ef4444" /></ListItemIcon>
                     <ListItemText primary="Sign Out / Switch User" sx={{ color: '#ef4444', fontWeight: 600 }} />
                   </MenuItem>
