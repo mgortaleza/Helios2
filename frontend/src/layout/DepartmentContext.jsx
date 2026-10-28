@@ -25,26 +25,11 @@ export function DepartmentProvider({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const hasAppliedDefaultRef = useRef(false);
+  const lastUserKeyRef = useRef(null);
 
   const initialDefault = resolveUserDefaultTier1(currentUser);
 
   const [activeDepartment, setActiveDepartmentState] = useState(() => {
-    const rawPath = (window.location.hash || window.location.pathname || '').toLowerCase();
-    const isRoot = rawPath === '/' || rawPath === '' || rawPath === '#/' || rawPath === '#';
-    if (!isRoot) {
-      if (rawPath.includes('claims')) return DEPARTMENTS.CLAIMS;
-      if (
-        rawPath.includes('policies') ||
-        rawPath.includes('submissions') ||
-        rawPath.includes('inbox') ||
-        rawPath.includes('quotes') ||
-        rawPath.includes('documents') ||
-        rawPath.includes('forms')
-      ) {
-        return DEPARTMENTS.UNDERWRITING;
-      }
-    }
     return initialDefault;
   });
 
@@ -58,15 +43,20 @@ export function DepartmentProvider({ children }) {
     activeDepartment === DEPARTMENTS.UNDERWRITING || activeDepartment === DEPARTMENTS.CLAIMS
   );
 
-  // Automatically apply role's customizable default Tier 1 selection when landing on root
+  // On Login or User Switch: Immediately reset Tier 1 & Tier 2 navigation to the user's role default
   useEffect(() => {
-    if (!currentUser) return;
-    const rawPath = (location.pathname || '') + (location.hash || '');
-    const isRoot = rawPath === '/' || rawPath === '' || rawPath === '#/' || rawPath === '#';
+    if (!currentUser) {
+      lastUserKeyRef.current = null;
+      return;
+    }
 
-    if (isRoot && !hasAppliedDefaultRef.current) {
-      hasAppliedDefaultRef.current = true;
+    const userKey = `${currentUser.userId || currentUser.username}_${currentUser.tenantId}`;
+    const isNewLogin = lastUserKeyRef.current !== userKey;
+
+    if (isNewLogin) {
+      lastUserKeyRef.current = userKey;
       const targetDept = resolveUserDefaultTier1(currentUser);
+
       if (targetDept === DEPARTMENTS.UNDERWRITING) {
         setActiveDepartmentState(DEPARTMENTS.UNDERWRITING);
         setIsTier2Open(true);
@@ -81,12 +71,15 @@ export function DepartmentProvider({ children }) {
         setActiveDepartmentState(DEPARTMENTS.DASHBOARD);
         setIsTier2Open(false);
         setIsTier1Collapsed(false);
+        navigate('/', { replace: true });
       }
     }
-  }, [currentUser, location.pathname, location.hash, navigate]);
+  }, [currentUser, navigate]);
 
-  // Synchronize department state with route changes
+  // Synchronize department state with in-session route changes
   useEffect(() => {
+    if (!lastUserKeyRef.current) return; // Wait until initial login routing has completed
+
     const rawPath = (location.pathname || '') + (location.hash || '');
     const path = rawPath.toLowerCase();
 
@@ -106,7 +99,6 @@ export function DepartmentProvider({ children }) {
       setIsTier2Open(true);
       setIsTier1Collapsed(true);
     } else if (path === '/' || path === '' || path === '#/' || path === '#') {
-      // If user navigated back to root dashboard explicitly
       setActiveDepartmentState(DEPARTMENTS.DASHBOARD);
       setIsTier2Open(false);
       setIsTier1Collapsed(false);
@@ -142,21 +134,21 @@ export function DepartmentProvider({ children }) {
     setIsTier2Open((prev) => !prev);
   }, []);
 
+  const value = {
+    activeDepartment,
+    setActiveDepartment: setActiveDepartmentState,
+    switchDepartment,
+    isTier1Collapsed,
+    setIsTier1Collapsed,
+    toggleTier1,
+    isTier2Open,
+    setIsTier2Open,
+    toggleTier2,
+    departments: DEPARTMENTS
+  };
+
   return (
-    <DepartmentReactContext.Provider
-      value={{
-        activeDepartment,
-        setActiveDepartment: switchDepartment,
-        switchDepartment,
-        isTier1Collapsed,
-        setIsTier1Collapsed,
-        toggleTier1,
-        isTier2Open,
-        setIsTier2Open,
-        toggleTier2,
-        departments: DEPARTMENTS
-      }}
-    >
+    <DepartmentReactContext.Provider value={value}>
       {children}
     </DepartmentReactContext.Provider>
   );
@@ -164,18 +156,10 @@ export function DepartmentProvider({ children }) {
 
 export function useDepartment() {
   const context = useContext(DepartmentReactContext);
-  return (
-    context || {
-      activeDepartment: DEPARTMENTS.DASHBOARD,
-      setActiveDepartment: () => {},
-      switchDepartment: () => {},
-      isTier1Collapsed: false,
-      setIsTier1Collapsed: () => {},
-      toggleTier1: () => {},
-      isTier2Open: false,
-      setIsTier2Open: () => {},
-      toggleTier2: () => {},
-      departments: DEPARTMENTS
-    }
-  );
+  if (!context) {
+    throw new Error('useDepartment must be used within a DepartmentProvider');
+  }
+  return context;
 }
+
+export default DepartmentProvider;

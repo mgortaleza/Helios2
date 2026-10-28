@@ -118,7 +118,13 @@ export function AuthProvider({ children }) {
     try {
       localStorage.removeItem('helios_auth_user');
       localStorage.removeItem('helios_last_active');
+      localStorage.removeItem('helios_selected_tenant_id');
+      localStorage.removeItem('helios2_tenantId');
       sessionStorage.clear();
+      // Reset browser path to root so next login starts clean
+      if (window.location.pathname !== '/' || window.location.hash !== '') {
+        window.history.replaceState(null, '', '/');
+      }
     } catch {}
   }, []);
 

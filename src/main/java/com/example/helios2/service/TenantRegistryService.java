@@ -115,7 +115,9 @@ public class TenantRegistryService {
                     BEGIN
                         ALTER TABLE dbo.TENANT_ROLE_CONFIG ADD DEFAULT_TIER1_NAV VARCHAR(50) NULL;
                     END
+                    """);
 
+            masterJdbcTemplate.execute("""
                     UPDATE dbo.TENANT_ROLE_CONFIG
                     SET DEFAULT_TIER1_NAV = CASE
                         WHEN UPPER(ROLE_CODE) LIKE '%UNDERWRITER%' OR UPPER(ROLE_CODE) = 'UW' THEN 'underwriting'

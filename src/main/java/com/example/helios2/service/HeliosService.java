@@ -27,8 +27,13 @@ public class HeliosService {
     private final JdbcTemplate tenantJdbcTemplate;
     private final Set<Integer> initializedTenants = ConcurrentHashMap.newKeySet();
 
-    public HeliosService(@Qualifier("tenantJdbcTemplate") JdbcTemplate tenantJdbcTemplate) {
+    private final TenantRegistryService tenantRegistryService;
+
+    public HeliosService(
+            @Qualifier("tenantJdbcTemplate") JdbcTemplate tenantJdbcTemplate,
+            @Autowired(required = false) TenantRegistryService tenantRegistryService) {
         this.tenantJdbcTemplate = tenantJdbcTemplate;
+        this.tenantRegistryService = tenantRegistryService;
     }
 
     public record AddressDto(
@@ -1738,7 +1743,6 @@ public class HeliosService {
                         user.displayName(),
                         user.roleCode(),
                         user.department(),
-                        (user.defaultTier1Nav() != null && !user.defaultTier1Nav().isBlank()) ? user.defaultTier1Nav() : resolveDefaultTier1(tenantId, user.roleCode()),
                         user.authProvider() != null ? user.authProvider() : "LOCAL",
                         user.externalSubjectId(),
                         user.active() ? 1 : 0,
@@ -1777,7 +1781,7 @@ public class HeliosService {
                         user.roleCode(),
                         resolveRoleName(user.roleCode()),
                         user.department(),
-                        (user.defaultTier1Nav() != null && !user.defaultTier1Nav().isBlank()) ? user.defaultTier1Nav() : resolveDefaultTier1(tenantId, user.roleCode()),
+                        (user.defaultTier1Nav() != null && !user.defaultTier1Nav().isBlank()) ? user.defaultTier1Nav() : resolveDefaultTier1(user.tenantId(), user.roleCode()),
                         user.authProvider() != null ? user.authProvider() : "LOCAL",
                         user.externalSubjectId(),
                         user.active(),

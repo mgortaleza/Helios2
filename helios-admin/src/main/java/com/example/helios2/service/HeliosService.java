@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import com.example.helios2.service.TenantRegistryService.DbPingResult;
 import com.example.helios2.tenant.TenantContext;
@@ -25,8 +26,13 @@ public class HeliosService {
     private final JdbcTemplate tenantJdbcTemplate;
     private final Set<Integer> initializedTenants = ConcurrentHashMap.newKeySet();
 
-    public HeliosService(@Qualifier("tenantJdbcTemplate") JdbcTemplate tenantJdbcTemplate) {
+    private final TenantRegistryService tenantRegistryService;
+
+    public HeliosService(
+            @Qualifier("tenantJdbcTemplate") JdbcTemplate tenantJdbcTemplate,
+            @Autowired(required = false) TenantRegistryService tenantRegistryService) {
         this.tenantJdbcTemplate = tenantJdbcTemplate;
+        this.tenantRegistryService = tenantRegistryService;
     }
 
     public record AddressDto(
@@ -216,6 +222,7 @@ public class HeliosService {
             String roleCode,
             String roleName,
             String department,
+            String defaultTier1Nav,
             String authProvider,
             String externalSubjectId,
             boolean active,
@@ -1464,6 +1471,17 @@ public class HeliosService {
         }
     }
 
+    public String resolveDefaultTier1(int tenantId, String roleCode) {
+        if (tenantRegistryService != null) {
+            return tenantRegistryService.getDefaultTier1ForRole(tenantId, roleCode);
+        }
+        if (roleCode == null) return "dashboard";
+        String upper = roleCode.toUpperCase();
+        if (upper.contains("UNDERWRITER") || upper.equals("UW")) return "underwriting";
+        if (upper.contains("CLAIM")) return "claims";
+        return "dashboard";
+    }
+
     public String resolveRoleName(String roleCode) {
         if (roleCode == null) return "User";
         return switch (roleCode.toUpperCase()) {
@@ -1499,6 +1517,7 @@ public class HeliosService {
                     rs.getString("ROLE_CODE"),
                     resolveRoleName(rs.getString("ROLE_CODE")),
                     rs.getString("DEPARTMENT"),
+                    resolveDefaultTier1(tenantId, rs.getString("ROLE_CODE")),
                     rs.getString("AUTH_PROVIDER") != null ? rs.getString("AUTH_PROVIDER") : "LOCAL",
                     rs.getString("EXTERNAL_SUBJECT_ID"),
                     rs.getBoolean("IS_ACTIVE"),
@@ -1566,6 +1585,7 @@ public class HeliosService {
                         user.roleCode(),
                         resolveRoleName(user.roleCode()),
                         user.department(),
+                        (user.defaultTier1Nav() != null && !user.defaultTier1Nav().isBlank()) ? user.defaultTier1Nav() : resolveDefaultTier1(user.tenantId(), user.roleCode()),
                         user.authProvider() != null ? user.authProvider() : "LOCAL",
                         user.externalSubjectId(),
                         user.active(),
@@ -1648,6 +1668,7 @@ public class HeliosService {
                     (String) userMap.get("roleCode"),
                     resolveRoleName((String) userMap.get("roleCode")),
                     (String) userMap.get("department"),
+                    resolveDefaultTier1((int) userMap.get("tenantId"), (String) userMap.get("roleCode")),
                     (String) userMap.get("authProvider"),
                     (String) userMap.get("externalSubjectId"),
                     (boolean) userMap.get("active"),
