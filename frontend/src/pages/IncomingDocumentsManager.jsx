@@ -324,6 +324,49 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
 
   const selectedDoc = selectedDocs[0] || null;
 
+  const handleOpenPreview = useCallback((docsToPreview, initialIndex = 0) => {
+    if (!docsToPreview || docsToPreview.length === 0) return;
+
+    const validIndex = Math.max(0, Math.min(initialIndex, docsToPreview.length - 1));
+    const payload = {
+      docs: docsToPreview,
+      activeIndex: validIndex,
+      tenantId: tenantId,
+      timestamp: Date.now()
+    };
+
+    // 1. Store in localStorage for instant access & storage event sync
+    try {
+      localStorage.setItem('helios_doc_preview_payload', JSON.stringify(payload));
+    } catch (e) {
+      console.warn('Failed to save preview payload in localStorage:', e);
+    }
+
+    // 2. Broadcast to existing popup window
+    try {
+      const channel = new BroadcastChannel('helios_doc_preview_channel');
+      channel.postMessage({ type: 'UPDATE_PREVIEW', ...payload });
+      setTimeout(() => channel.close(), 100);
+    } catch (e) {
+      console.warn('BroadcastChannel error:', e);
+    }
+
+    // 3. Open or focus the named popup window
+    const previewUrl = `${window.location.origin}${window.location.pathname}#/document-preview`;
+    const popup = window.open(
+      previewUrl,
+      'helios_doc_preview_window',
+      'width=1320,height=920,left=120,top=60,resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no'
+    );
+
+    if (popup && !popup.closed) {
+      popup.focus();
+    } else {
+      // Fallback to inline modal if popups are blocked by browser
+      setPreviewDoc(docsToPreview[validIndex] || docsToPreview[0]);
+    }
+  }, [tenantId]);
+
   const totalSelectedBytes = useMemo(() => {
     return selectedDocs.reduce((acc, d) => acc + (d.fileSizeBytes || 0), 0);
   }, [selectedDocs]);
@@ -577,25 +620,25 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                 size="small"
                 variant="outlined"
                 startIcon={<Eye size={15} />}
-                disabled={selectedDocs.length !== 1}
-                onClick={() => selectedDoc && setPreviewDoc(selectedDoc)}
+                disabled={selectedDocs.length === 0}
+                onClick={() => handleOpenPreview(selectedDocs, 0)}
                 sx={{ fontWeight: 600 }}
               >
-                Open / Preview
+                {selectedDocs.length > 1 ? `Open / Preview (${selectedDocs.length})` : 'Open / Preview'}
               </Button>
               <Button
                 size="small"
                 variant="outlined"
                 startIcon={<Download size={15} />}
-                disabled={selectedDocs.length !== 1}
+                disabled={selectedDocs.length === 0}
                 onClick={() => {
-                  if (selectedDoc) {
-                    window.open(`/document-api/documents/incoming/${selectedDoc.incomingId}/download?tenantId=${tenantId}`, '_blank');
-                  }
+                  selectedDocs.forEach((doc) => {
+                    window.open(`/document-api/documents/incoming/${doc.incomingId}/download?tenantId=${tenantId}`, '_blank');
+                  });
                 }}
                 sx={{ fontWeight: 600 }}
               >
-                Download
+                {selectedDocs.length > 1 ? `Download (${selectedDocs.length})` : 'Download'}
               </Button>
               <Button
                 size="small"
@@ -702,7 +745,14 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                             hover
                             selected={isHighlight}
                             onClick={() => handleToggleParent(parentDoc, children)}
-                            onDoubleClick={() => setPreviewDoc(parentDoc)}
+                            onDoubleClick={() => {
+                              if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === parentDoc.incomingId)) {
+                                const idx = selectedDocs.findIndex((d) => d.incomingId === parentDoc.incomingId);
+                                handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
+                              } else {
+                                handleOpenPreview([parentDoc], 0);
+                              }
+                            }}
                             sx={{
                               cursor: 'pointer',
                               bgcolor: isHighlight ? 'rgba(2, 132, 199, 0.08) !important' : '#ffffff',
@@ -804,7 +854,14 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                                   hover
                                   selected={isChildSelected}
                                   onClick={() => handleToggleChild(child)}
-                                  onDoubleClick={() => setPreviewDoc(child)}
+                                  onDoubleClick={() => {
+                                    if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === child.incomingId)) {
+                                      const idx = selectedDocs.findIndex((d) => d.incomingId === child.incomingId);
+                                      handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
+                                    } else {
+                                      handleOpenPreview([child], 0);
+                                    }
+                                  }}
                                   sx={{
                                     cursor: 'pointer',
                                     bgcolor: isChildSelected ? 'rgba(2, 132, 199, 0.08) !important' : '#f8fafc',
@@ -881,7 +938,14 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
                         hover
                         selected={isSelected}
                         onClick={() => handleToggleSingle(doc)}
-                        onDoubleClick={() => setPreviewDoc(doc)}
+                        onDoubleClick={() => {
+                          if (selectedDocs.length > 1 && selectedDocs.some((d) => d.incomingId === doc.incomingId)) {
+                            const idx = selectedDocs.findIndex((d) => d.incomingId === doc.incomingId);
+                            handleOpenPreview(selectedDocs, idx >= 0 ? idx : 0);
+                          } else {
+                            handleOpenPreview([doc], 0);
+                          }
+                        }}
                         sx={{
                           cursor: 'pointer',
                           bgcolor: isSelected ? 'rgba(2, 132, 199, 0.08) !important' : 'inherit',
@@ -973,6 +1037,18 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
             </Box>
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              startIcon={<ExternalLink size={14} />}
+              onClick={() => {
+                handleOpenPreview(selectedDocs.length > 0 ? selectedDocs : [previewDoc], 0);
+                setPreviewDoc(null);
+              }}
+            >
+              Pop Out to 2nd Screen
+            </Button>
             <Button
               size="small"
               variant="outlined"

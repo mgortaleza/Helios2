@@ -36,6 +36,7 @@ import { TenantList } from './resources/tenants.jsx';
 import { DashboardPage } from './pages/DashboardPage.jsx';
 import { InboxPage } from './pages/InboxPage.jsx';
 import { DiagnosticsPage } from './pages/DiagnosticsPage.jsx';
+import { DocumentPreviewPage } from './pages/DocumentPreviewPage.jsx';
 
 /**
  * Modern Corporate Enterprise Theme for Helios2
@@ -141,6 +142,15 @@ function AppShell() {
       theme={heliosTheme}
       error={HeliosErrorFallback}
     >
+        {/* =================================================================
+            STANDALONE DETACHED WINDOW ROUTES (noLayout)
+            Used for 2nd screen multi-document previewer and popup windows.
+           ================================================================= */}
+        <CustomRoutes noLayout>
+          <Route path="document-preview" element={<DocumentPreviewPage />} />
+          <Route path="/document-preview" element={<DocumentPreviewPage />} />
+        </CustomRoutes>
+
         <CustomRoutes>
           {/* =================================================================
               TIER 2 ROUTES
