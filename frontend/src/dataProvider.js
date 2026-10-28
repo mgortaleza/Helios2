@@ -25,10 +25,68 @@ function paginateRecords(records, pagination) {
 async function fetchMappedResource(resource, queryFilter = '') {
   if (resource === 'submissions') {
     const data = await apiFetch('/api/submissions');
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
-      id: item.submsnId
+      id: item.submsnId ?? item.id
     }));
+  }
+
+  if (resource === 'policies') {
+    const data = await apiFetch('/api/policies');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.policyId ?? item.id
+    }));
+  }
+
+  if (resource === 'quotes') {
+    const data = await apiFetch('/api/quotes');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.quoteId ?? item.id
+    }));
+  }
+
+  if (resource === 'claims') {
+    const data = await apiFetch('/api/claims');
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      ...item,
+      id: item.claimId ?? item.id
+    }));
+  }
+
+  if (resource === 'documents') {
+    try {
+      const data = await apiFetch('/api/documents');
+      return (Array.isArray(data) ? data : []).map((item) => ({
+        ...item,
+        id: item.documentId ?? item.docId ?? item.id
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  if (resource === 'inbox' || resource === 'incoming') {
+    try {
+      const data = await apiFetch('/api/documents/incoming');
+      return (Array.isArray(data) ? data : []).map((item) => ({
+        ...item,
+        id: item.incomingId ?? item.id
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  if (resource === 'forms') {
+    return [
+      { id: 1, formCode: 'ACORD-125', formName: 'Commercial Insurance Application', category: 'General Liability', version: '2025.1', status: 'Active' },
+      { id: 2, formCode: 'ACORD-126', formName: 'Commercial General Liability Section', category: 'General Liability', version: '2025.1', status: 'Active' },
+      { id: 3, formCode: 'ACORD-140', formName: 'Property Section Application', category: 'Commercial Property', version: '2024.3', status: 'Active' },
+      { id: 4, formCode: 'ACORD-130', formName: 'Workers Compensation Application', category: 'Workers Comp', version: '2025.2', status: 'Active' },
+      { id: 5, formCode: 'HELIOS-SOV-01', formName: 'Schedule of Values & Loss History', category: 'Property', version: '2026.1', status: 'Active' }
+    ];
   }
 
   if (resource === 'parties') {
@@ -36,7 +94,7 @@ async function fetchMappedResource(resource, queryFilter = '') {
       ? `/api/parties?q=${encodeURIComponent(queryFilter)}`
       : '/api/parties';
     const data = await apiFetch(url);
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
       id: item.id,
       orgName: item.name
@@ -45,13 +103,13 @@ async function fetchMappedResource(resource, queryFilter = '') {
 
   if (resource === 'tenants') {
     const data = await apiFetch('/api/tenants');
-    return data.map((item) => ({
+    return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
       id: item.tenantId
     }));
   }
 
-  throw new Error(`Unsupported resource: ${resource}`);
+  return [];
 }
 
 export const dataProvider = {

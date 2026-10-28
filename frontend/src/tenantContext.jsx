@@ -82,6 +82,15 @@ export function TenantProvider({ children }) {
 }
 
 export function useTenant() {
-  return useContext(TenantReactContext);
+  const context = useContext(TenantReactContext);
+  return (
+    context || {
+      tenants: [],
+      activeTenantId: 1,
+      activeTenant: null,
+      setActiveTenantId: () => {},
+      reloadTenants: async () => {}
+    }
+  );
 }
 
