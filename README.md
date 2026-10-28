@@ -3,6 +3,16 @@
 ## Overview
 **Helios2** is the next-generation modernization of the legacy Jakarta EE / JSP **Helios** application. It uses a **Spring Boot 3.4 (Java 21)** backend, a **React 18 (Vite)** frontend, and **Microsoft SQL Server** with dynamic multi-tenant database routing powered by **`MSTR_DATA`** and **`HELIOS2_TST`**.
 
+Link to live dev build:
+
+Application:
+
+https://app.netyx.net
+
+Administration:
+
+https://admin.netyx.net
+
 ---
 
 ## Architecture & Multi-Tenancy
