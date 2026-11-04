@@ -159,6 +159,28 @@ public class HeliosService {
     ) {
     }
 
+    public record ProductDto(
+            String productCode,
+            String productName,
+            String lineOfBusiness,
+            String description,
+            RatingPlanDto ratingPlan
+    ) {
+    }
+
+    public record RatingPlanDto(
+            String planCode,
+            String productCode,
+            String planName,
+            String ruleVersionId,
+            String exposureBasis,
+            Long defaultBasePremiumCents,
+            Long defaultLimitCents,
+            Long defaultDeductibleCents,
+            String description
+    ) {
+    }
+
     public record QuoteDto(
             String quoteId,
             String premium,
@@ -173,17 +195,31 @@ public class HeliosService {
             String serffTrackingNbr,
             String baseRate,
             String calcTrace,
-            Integer submsnId
+            Integer submsnId,
+            String planCode,
+            String planName,
+            String ruleVersionId,
+            Long calculatedPremiumCents,
+            String factsJson,
+            String insuredName
     ) {
         public QuoteDto(String quoteId, String premium, String status, String generated) {
-            this(quoteId, premium, status, generated, null, null, null, null, null, null, null, null, null, null);
+            this(quoteId, premium, status, generated, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
         public QuoteDto(String quoteId, String premium, String status, String generated,
                         String productCode, String stateCode, String exposureVal,
                         String limitAmt, String retentionAmt, String scheduleMod,
                         String serffTrackingNbr, String baseRate, String calcTrace) {
             this(quoteId, premium, status, generated, productCode, stateCode, exposureVal,
-                 limitAmt, retentionAmt, scheduleMod, serffTrackingNbr, baseRate, calcTrace, null);
+                 limitAmt, retentionAmt, scheduleMod, serffTrackingNbr, baseRate, calcTrace, null, null, null, null, null, null, null);
+        }
+        public QuoteDto(String quoteId, String premium, String status, String generated,
+                        String productCode, String stateCode, String exposureVal,
+                        String limitAmt, String retentionAmt, String scheduleMod,
+                        String serffTrackingNbr, String baseRate, String calcTrace,
+                        Integer submsnId) {
+            this(quoteId, premium, status, generated, productCode, stateCode, exposureVal,
+                 limitAmt, retentionAmt, scheduleMod, serffTrackingNbr, baseRate, calcTrace, submsnId, null, null, null, null, null, null);
         }
     }
 
@@ -425,6 +461,50 @@ public class HeliosService {
                     IF COL_LENGTH('dbo.UW_QUOTE', 'CALC_TRACE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD CALC_TRACE VARCHAR(MAX) NULL;
                     IF COL_LENGTH('dbo.UW_QUOTE', 'ATTACHED_FORMS') IS NULL ALTER TABLE dbo.UW_QUOTE ADD ATTACHED_FORMS VARCHAR(MAX) NULL;
                     IF COL_LENGTH('dbo.UW_QUOTE', 'UNDERWRITING_REFERRALS') IS NULL ALTER TABLE dbo.UW_QUOTE ADD UNDERWRITING_REFERRALS VARCHAR(MAX) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'PLAN_CODE') IS NULL ALTER TABLE dbo.UW_QUOTE ADD PLAN_CODE VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'PLAN_NAME') IS NULL ALTER TABLE dbo.UW_QUOTE ADD PLAN_NAME VARCHAR(150) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'RULE_VERSION_ID') IS NULL ALTER TABLE dbo.UW_QUOTE ADD RULE_VERSION_ID VARCHAR(50) NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'CALCULATED_PREMIUM_CENTS') IS NULL ALTER TABLE dbo.UW_QUOTE ADD CALCULATED_PREMIUM_CENTS BIGINT NULL;
+                    IF COL_LENGTH('dbo.UW_QUOTE', 'FACTS_JSON') IS NULL ALTER TABLE dbo.UW_QUOTE ADD FACTS_JSON NVARCHAR(MAX) NULL;
+
+                    IF OBJECT_ID('dbo.UW_PRODUCT', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.UW_PRODUCT (
+                            PRODUCT_CODE VARCHAR(50) NOT NULL PRIMARY KEY,
+                            PRODUCT_NAME VARCHAR(150) NOT NULL,
+                            LINE_OF_BUSINESS VARCHAR(100) NOT NULL,
+                            DESCRIPTION VARCHAR(500) NULL,
+                            IS_ACTIVE BIT DEFAULT 1 NOT NULL
+                        );
+                        INSERT INTO dbo.UW_PRODUCT (PRODUCT_CODE, PRODUCT_NAME, LINE_OF_BUSINESS, DESCRIPTION, IS_ACTIVE) VALUES
+                        ('TECH_EO', 'Technology Errors & Omissions', 'Professional Liability', 'Tech consulting, cloud hosting, SaaS developers, cybersecurity', 1),
+                        ('MED_MAL', 'Medical Malpractice', 'Healthcare Professional Liability', 'Physicians, healthcare groups, ambulatory clinics, surgical centers', 1),
+                        ('DNO', 'Directors & Officers Liability', 'Management Liability', 'Executive protection, board governance, corporate indemnity', 1),
+                        ('CGL', 'Commercial General Liability', 'General Liability', 'Commercial premises liability, operations, bodily injury & property damage', 1),
+                        ('CP', 'Commercial Property', 'Property', 'Commercial buildings, contents, equipment breakdown, business interruption', 1);
+                    END;
+
+                    IF OBJECT_ID('dbo.UW_RATING_PLAN', 'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.UW_RATING_PLAN (
+                            PLAN_CODE VARCHAR(50) NOT NULL PRIMARY KEY,
+                            PRODUCT_CODE VARCHAR(50) NOT NULL REFERENCES dbo.UW_PRODUCT(PRODUCT_CODE),
+                            PLAN_NAME VARCHAR(150) NOT NULL,
+                            RULE_VERSION_ID VARCHAR(50) NOT NULL DEFAULT 'v1.0.0',
+                            EXPOSURE_BASIS VARCHAR(50) NOT NULL,
+                            DEFAULT_BASE_PREMIUM_CENTS BIGINT NOT NULL DEFAULT 250000,
+                            DEFAULT_LIMIT_CENTS BIGINT NOT NULL DEFAULT 200000000,
+                            DEFAULT_DEDUCTIBLE_CENTS BIGINT NOT NULL DEFAULT 2500000,
+                            DESCRIPTION VARCHAR(500) NULL,
+                            IS_ACTIVE BIT DEFAULT 1 NOT NULL
+                        );
+                        INSERT INTO dbo.UW_RATING_PLAN (PLAN_CODE, PRODUCT_CODE, PLAN_NAME, RULE_VERSION_ID, EXPOSURE_BASIS, DEFAULT_BASE_PREMIUM_CENTS, DEFAULT_LIMIT_CENTS, DEFAULT_DEDUCTIBLE_CENTS, DESCRIPTION, IS_ACTIVE) VALUES
+                        ('TECH_EO_COMMERCIAL', 'TECH_EO', 'Standard Commercial Tech E&O Rating Plan', 'v1.0.0', 'REVENUE_PER_1K', 250000, 200000000, 2500000, 'Drools standalone rules: Retro step-rate load, claims-free credit, CEOL endorsement', 1),
+                        ('MED_MAL_PRIMARY', 'MED_MAL', 'Primary Physician & Healthcare Rating Plan', 'v1.0.0', 'HEADCOUNT', 420000, 100000000, 1000000, 'Drools standalone rules: Specialty acuity matrix, malpractice history surcharges', 1),
+                        ('DNO_PRIVATE', 'DNO', 'Private Enterprise D&O Rating Plan', 'v1.0.0', 'ASSETS_PER_1M', 350000, 500000000, 5000000, 'Drools standalone rules: Asset tiers, governance peer review QA', 1),
+                        ('CGL_STANDARD', 'CGL', 'Standard Commercial General Liability Plan', 'v1.0.0', 'PAYROLL_PER_1K', 180000, 100000000, 500000, 'Baseline general liability rating program', 1),
+                        ('CP_BUILDING', 'CP', 'Commercial Property Building & Contents Plan', 'v1.0.0', 'TIV_PER_100', 220000, 300000000, 1000000, 'Total Insurable Value building and business personal property', 1);
+                    END;
                     """);
 
             // 6. Ensure dbo.CLM_CLAIM exists
@@ -883,33 +963,61 @@ public class HeliosService {
         return enriched;
     }
 
+    private QuoteDto mapQuoteDto(java.sql.ResultSet rs) throws java.sql.SQLException {
+        String quoteNbr = rs.getString("QUOTE_NBR");
+        String premium = rs.getString("PREMIUM");
+        String status = rs.getString("STATUS");
+        String genDt = rs.getString("GENERATED_DT");
+        String prodCode = rs.getString("PRODUCT_CODE");
+        String stateCode = rs.getString("STATE_CODE");
+        String expVal = rs.getString("EXPOSURE_VAL");
+        String limitAmt = rs.getString("LIMIT_AMT");
+        String retAmt = rs.getString("RETENTION_AMT");
+        String schedMod = rs.getString("SCHEDULE_MOD");
+        String serff = rs.getString("SERFF_TRACKING_NBR");
+        String baseRate = rs.getString("BASE_RATE");
+        String calcTrace = rs.getString("CALC_TRACE");
+        int subId = rs.getInt("SUBMSN_ID");
+        String planCode = rs.getString("PLAN_CODE");
+        String planName = rs.getString("PLAN_NAME");
+        String ruleVersionId = rs.getString("RULE_VERSION_ID");
+        Long calcCents = null;
+        try {
+            long val = rs.getLong("CALCULATED_PREMIUM_CENTS");
+            if (!rs.wasNull()) {
+                calcCents = val;
+            }
+        } catch (Exception ignored) {}
+        String factsJson = rs.getString("FACTS_JSON");
+        String insuredNm = "";
+        try {
+            insuredNm = rs.getString("INSURED_NM");
+        } catch (Exception ignored) {}
+
+        return new QuoteDto(
+                quoteNbr, premium, status, genDt,
+                prodCode, stateCode, expVal, limitAmt, retAmt, schedMod,
+                serff, baseRate, calcTrace, subId,
+                planCode, planName, ruleVersionId, calcCents, factsJson, insuredNm
+        );
+    }
+
     private Map<Integer, List<QuoteDto>> loadQuotesBySubmission() {
         Map<Integer, List<QuoteDto>> map = new LinkedHashMap<>();
         tenantJdbcTemplate.query("""
-                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
-                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
-                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
-                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
-                FROM dbo.UW_QUOTE
-                ORDER BY QUOTE_ID ASC
+                SELECT q.QUOTE_NBR, q.SUBMSN_ID, q.PREMIUM, q.STATUS, q.GENERATED_DT,
+                       q.PRODUCT_CODE, q.STATE_CODE, CAST(q.EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       q.LIMIT_AMT, q.RETENTION_AMT, CAST(q.SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       q.SERFF_TRACKING_NBR, CAST(q.BASE_RATE AS VARCHAR(50)) AS BASE_RATE, q.CALC_TRACE,
+                       q.PLAN_CODE, q.PLAN_NAME, q.RULE_VERSION_ID, q.CALCULATED_PREMIUM_CENTS, q.FACTS_JSON,
+                       ISNULL(p.ORG_NM, '') AS INSURED_NM
+                FROM dbo.UW_QUOTE q
+                LEFT JOIN dbo.UW_SUBMSN s ON q.SUBMSN_ID = s.SUBMSN_ID
+                LEFT JOIN dbo.PT_PARTY p ON s.INSURED_PID = p.PARTY_ID
+                ORDER BY q.QUOTE_ID ASC
                 """, rs -> {
             int subId = rs.getInt("SUBMSN_ID");
-            map.computeIfAbsent(subId, k -> new ArrayList<>()).add(new QuoteDto(
-                    rs.getString("QUOTE_NBR"),
-                    rs.getString("PREMIUM"),
-                    rs.getString("STATUS"),
-                    rs.getString("GENERATED_DT"),
-                    rs.getString("PRODUCT_CODE"),
-                    rs.getString("STATE_CODE"),
-                    rs.getString("EXPOSURE_VAL"),
-                    rs.getString("LIMIT_AMT"),
-                    rs.getString("RETENTION_AMT"),
-                    rs.getString("SCHEDULE_MOD"),
-                    rs.getString("SERFF_TRACKING_NBR"),
-                    rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE"),
-                    subId
-            ));
+            map.computeIfAbsent(subId, k -> new ArrayList<>()).add(mapQuoteDto(rs));
         });
         return map;
     }
@@ -918,29 +1026,18 @@ public class HeliosService {
         ensureTenantSchema();
         List<QuoteDto> list = new ArrayList<>();
         tenantJdbcTemplate.query("""
-                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
-                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
-                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
-                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
-                FROM dbo.UW_QUOTE
-                ORDER BY QUOTE_ID DESC
+                SELECT q.QUOTE_NBR, q.SUBMSN_ID, q.PREMIUM, q.STATUS, q.GENERATED_DT,
+                       q.PRODUCT_CODE, q.STATE_CODE, CAST(q.EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       q.LIMIT_AMT, q.RETENTION_AMT, CAST(q.SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       q.SERFF_TRACKING_NBR, CAST(q.BASE_RATE AS VARCHAR(50)) AS BASE_RATE, q.CALC_TRACE,
+                       q.PLAN_CODE, q.PLAN_NAME, q.RULE_VERSION_ID, q.CALCULATED_PREMIUM_CENTS, q.FACTS_JSON,
+                       ISNULL(p.ORG_NM, '') AS INSURED_NM
+                FROM dbo.UW_QUOTE q
+                LEFT JOIN dbo.UW_SUBMSN s ON q.SUBMSN_ID = s.SUBMSN_ID
+                LEFT JOIN dbo.PT_PARTY p ON s.INSURED_PID = p.PARTY_ID
+                ORDER BY q.QUOTE_ID DESC
                 """, rs -> {
-            list.add(new QuoteDto(
-                    rs.getString("QUOTE_NBR"),
-                    rs.getString("PREMIUM"),
-                    rs.getString("STATUS"),
-                    rs.getString("GENERATED_DT"),
-                    rs.getString("PRODUCT_CODE"),
-                    rs.getString("STATE_CODE"),
-                    rs.getString("EXPOSURE_VAL"),
-                    rs.getString("LIMIT_AMT"),
-                    rs.getString("RETENTION_AMT"),
-                    rs.getString("SCHEDULE_MOD"),
-                    rs.getString("SERFF_TRACKING_NBR"),
-                    rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE"),
-                    rs.getInt("SUBMSN_ID")
-            ));
+            list.add(mapQuoteDto(rs));
         });
         return list;
     }
@@ -949,32 +1046,101 @@ public class HeliosService {
         ensureTenantSchema();
         List<QuoteDto> list = new ArrayList<>();
         tenantJdbcTemplate.query("""
-                SELECT QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
-                       PRODUCT_CODE, STATE_CODE, CAST(EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
-                       LIMIT_AMT, RETENTION_AMT, CAST(SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
-                       SERFF_TRACKING_NBR, CAST(BASE_RATE AS VARCHAR(50)) AS BASE_RATE, CALC_TRACE
-                FROM dbo.UW_QUOTE
-                WHERE SUBMSN_ID = ?
-                ORDER BY QUOTE_ID DESC
+                SELECT q.QUOTE_NBR, q.SUBMSN_ID, q.PREMIUM, q.STATUS, q.GENERATED_DT,
+                       q.PRODUCT_CODE, q.STATE_CODE, CAST(q.EXPOSURE_VAL AS VARCHAR(50)) AS EXPOSURE_VAL,
+                       q.LIMIT_AMT, q.RETENTION_AMT, CAST(q.SCHEDULE_MOD AS VARCHAR(50)) AS SCHEDULE_MOD,
+                       q.SERFF_TRACKING_NBR, CAST(q.BASE_RATE AS VARCHAR(50)) AS BASE_RATE, q.CALC_TRACE,
+                       q.PLAN_CODE, q.PLAN_NAME, q.RULE_VERSION_ID, q.CALCULATED_PREMIUM_CENTS, q.FACTS_JSON,
+                       ISNULL(p.ORG_NM, '') AS INSURED_NM
+                FROM dbo.UW_QUOTE q
+                LEFT JOIN dbo.UW_SUBMSN s ON q.SUBMSN_ID = s.SUBMSN_ID
+                LEFT JOIN dbo.PT_PARTY p ON s.INSURED_PID = p.PARTY_ID
+                WHERE q.SUBMSN_ID = ?
+                ORDER BY q.QUOTE_ID DESC
                 """, rs -> {
-            list.add(new QuoteDto(
-                    rs.getString("QUOTE_NBR"),
-                    rs.getString("PREMIUM"),
-                    rs.getString("STATUS"),
-                    rs.getString("GENERATED_DT"),
-                    rs.getString("PRODUCT_CODE"),
-                    rs.getString("STATE_CODE"),
-                    rs.getString("EXPOSURE_VAL"),
-                    rs.getString("LIMIT_AMT"),
-                    rs.getString("RETENTION_AMT"),
-                    rs.getString("SCHEDULE_MOD"),
-                    rs.getString("SERFF_TRACKING_NBR"),
-                    rs.getString("BASE_RATE"),
-                    rs.getString("CALC_TRACE"),
-                    rs.getInt("SUBMSN_ID")
-            ));
+            list.add(mapQuoteDto(rs));
         }, submsnId);
         return list;
+    }
+
+    public List<ProductDto> getAllProducts() {
+        ensureTenantSchema();
+        Map<String, RatingPlanDto> plansByProduct = new LinkedHashMap<>();
+        try {
+            tenantJdbcTemplate.query("""
+                    SELECT PLAN_CODE, PRODUCT_CODE, PLAN_NAME, RULE_VERSION_ID, EXPOSURE_BASIS,
+                           DEFAULT_BASE_PREMIUM_CENTS, DEFAULT_LIMIT_CENTS, DEFAULT_DEDUCTIBLE_CENTS, DESCRIPTION
+                    FROM dbo.UW_RATING_PLAN
+                    WHERE IS_ACTIVE = 1
+                    """, rs -> {
+                plansByProduct.put(rs.getString("PRODUCT_CODE"), new RatingPlanDto(
+                        rs.getString("PLAN_CODE"),
+                        rs.getString("PRODUCT_CODE"),
+                        rs.getString("PLAN_NAME"),
+                        rs.getString("RULE_VERSION_ID"),
+                        rs.getString("EXPOSURE_BASIS"),
+                        rs.getLong("DEFAULT_BASE_PREMIUM_CENTS"),
+                        rs.getLong("DEFAULT_LIMIT_CENTS"),
+                        rs.getLong("DEFAULT_DEDUCTIBLE_CENTS"),
+                        rs.getString("DESCRIPTION")
+                ));
+            });
+        } catch (Exception e) {
+            System.err.println("Warning querying dbo.UW_RATING_PLAN: " + e.getMessage());
+        }
+
+        List<ProductDto> products = new ArrayList<>();
+        try {
+            tenantJdbcTemplate.query("""
+                    SELECT PRODUCT_CODE, PRODUCT_NAME, LINE_OF_BUSINESS, DESCRIPTION
+                    FROM dbo.UW_PRODUCT
+                    WHERE IS_ACTIVE = 1
+                    ORDER BY PRODUCT_CODE ASC
+                    """, rs -> {
+                String code = rs.getString("PRODUCT_CODE");
+                products.add(new ProductDto(
+                        code,
+                        rs.getString("PRODUCT_NAME"),
+                        rs.getString("LINE_OF_BUSINESS"),
+                        rs.getString("DESCRIPTION"),
+                        plansByProduct.get(code)
+                ));
+            });
+        } catch (Exception e) {
+            System.err.println("Warning querying dbo.UW_PRODUCT: " + e.getMessage());
+        }
+
+        if (products.isEmpty()) {
+            return getFallbackProducts();
+        }
+        return products;
+    }
+
+    public List<ProductDto> getFallbackProducts() {
+        RatingPlanDto techPlan = new RatingPlanDto("TECH_EO_COMMERCIAL", "TECH_EO", "Standard Commercial Tech E&O Rating Plan", "v1.0.0", "REVENUE_PER_1K", 250000L, 200000000L, 2500000L, "Drools standalone rules: Retro step-rate load, claims-free credit, CEOL endorsement");
+        RatingPlanDto medPlan = new RatingPlanDto("MED_MAL_PRIMARY", "MED_MAL", "Primary Physician & Healthcare Rating Plan", "v1.0.0", "HEADCOUNT", 420000L, 100000000L, 1000000L, "Drools standalone rules: Specialty acuity matrix, malpractice history surcharges");
+        RatingPlanDto dnoPlan = new RatingPlanDto("DNO_PRIVATE", "DNO", "Private Enterprise D&O Rating Plan", "v1.0.0", "ASSETS_PER_1M", 350000L, 500000000L, 5000000L, "Drools standalone rules: Asset tiers, governance peer review QA");
+        RatingPlanDto cglPlan = new RatingPlanDto("CGL_STANDARD", "CGL", "Standard Commercial General Liability Plan", "v1.0.0", "PAYROLL_PER_1K", 180000L, 100000000L, 500000L, "Baseline general liability rating program");
+        RatingPlanDto cpPlan = new RatingPlanDto("CP_BUILDING", "CP", "Commercial Property Building & Contents Plan", "v1.0.0", "TIV_PER_100", 220000L, 300000000L, 1000000L, "Total Insurable Value building and business personal property");
+
+        return List.of(
+                new ProductDto("TECH_EO", "Technology Errors & Omissions", "Professional Liability", "Tech consulting, cloud hosting, SaaS developers, cybersecurity", techPlan),
+                new ProductDto("MED_MAL", "Medical Malpractice", "Healthcare Professional Liability", "Physicians, healthcare groups, ambulatory clinics, surgical centers", medPlan),
+                new ProductDto("DNO", "Directors & Officers Liability", "Management Liability", "Executive protection, board governance, corporate indemnity", dnoPlan),
+                new ProductDto("CGL", "Commercial General Liability", "General Liability", "Commercial premises liability, operations, bodily injury & property damage", cglPlan),
+                new ProductDto("CP", "Commercial Property", "Property", "Commercial buildings, contents, equipment breakdown, business interruption", cpPlan)
+        );
+    }
+
+    public java.util.Optional<ProductDto> getProductByCode(String productCode) {
+        if (productCode == null) return java.util.Optional.empty();
+        return getAllProducts().stream()
+                .filter(p -> p.productCode().equalsIgnoreCase(productCode))
+                .findFirst();
+    }
+
+    public java.util.Optional<RatingPlanDto> getRatingPlanForProduct(String productCode) {
+        return getProductByCode(productCode).map(ProductDto::ratingPlan);
     }
 
     public QuoteDto createRatedQuote(
@@ -989,6 +1155,32 @@ public class HeliosService {
             String serffTrackingNbr,
             String baseRate,
             String calcTrace,
+            String status
+    ) {
+        return createRatedQuote(
+                submsnId, productCode, null, null, null, null,
+                stateCode, exposureVal, limitAmt, retentionAmt, scheduleMod,
+                premium, serffTrackingNbr, baseRate, calcTrace, null, status
+        );
+    }
+
+    public QuoteDto createRatedQuote(
+            int submsnId,
+            String productCode,
+            String planCode,
+            String planName,
+            String ruleVersionId,
+            Long calculatedPremiumCents,
+            String stateCode,
+            String exposureVal,
+            String limitAmt,
+            String retentionAmt,
+            String scheduleMod,
+            String premium,
+            String serffTrackingNbr,
+            String baseRate,
+            String calcTrace,
+            String factsJson,
             String status
     ) {
         ensureTenantSchema();
@@ -1022,12 +1214,14 @@ public class HeliosService {
                 INSERT INTO dbo.UW_QUOTE (
                     QUOTE_NBR, SUBMSN_ID, PREMIUM, STATUS, GENERATED_DT,
                     PRODUCT_CODE, STATE_CODE, EXPOSURE_VAL, LIMIT_AMT, RETENTION_AMT,
-                    SCHEDULE_MOD, SERFF_TRACKING_NBR, BASE_RATE, CALC_TRACE
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    SCHEDULE_MOD, SERFF_TRACKING_NBR, BASE_RATE, CALC_TRACE,
+                    PLAN_CODE, PLAN_NAME, RULE_VERSION_ID, CALCULATED_PREMIUM_CENTS, FACTS_JSON
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 quoteNbr, submsnId, premium, finalStatus, today,
                 productCode, stateCode, expNum, limitAmt, retentionAmt,
-                schedNum, serffTrackingNbr, baseNum, calcTrace
+                schedNum, serffTrackingNbr, baseNum, calcTrace,
+                planCode, planName, ruleVersionId, calculatedPremiumCents, factsJson
         );
 
         if (submsnId > 0) {
@@ -1038,10 +1232,21 @@ public class HeliosService {
                     """, submsnId);
         }
 
+        String insuredName = "";
+        try {
+            insuredName = tenantJdbcTemplate.queryForObject("""
+                    SELECT ISNULL(p.ORG_NM, '')
+                    FROM dbo.UW_SUBMSN s
+                    JOIN dbo.PT_PARTY p ON s.INSURED_PID = p.PARTY_ID
+                    WHERE s.SUBMSN_ID = ?
+                    """, String.class, submsnId);
+        } catch (Exception ignored) {}
+
         return new QuoteDto(
                 quoteNbr, premium, finalStatus, today,
                 productCode, stateCode, exposureVal, limitAmt, retentionAmt,
-                scheduleMod, serffTrackingNbr, baseRate, calcTrace, submsnId
+                scheduleMod, serffTrackingNbr, baseRate, calcTrace, submsnId,
+                planCode, planName, ruleVersionId, calculatedPremiumCents, factsJson, insuredName
         );
     }
 

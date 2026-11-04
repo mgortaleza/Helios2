@@ -43,7 +43,13 @@ async function fetchMappedResource(resource, queryFilter = '') {
     const data = await apiFetch('/api/quotes');
     return (Array.isArray(data) ? data : []).map((item) => ({
       ...item,
-      id: item.quoteId ?? item.id
+      id: item.quoteId ?? item.quoteNbr ?? item.id,
+      quoteNbr: item.quoteId ?? item.quoteNbr,
+      insuredName: item.insuredName && item.insuredName.trim() ? item.insuredName : 'Insured Account',
+      productType: item.productName || item.productCode || 'Technology E&O',
+      ratePlanVersion: item.planName ? `${item.planName} (${item.ruleVersionId || 'v1.0.0'})` : 'BRMS Drools (v1.0.0)',
+      calculatedPremium: item.premium || '$0.00',
+      quoteStatus: item.status || 'Quoted'
     }));
   }
 
@@ -80,13 +86,24 @@ async function fetchMappedResource(resource, queryFilter = '') {
   }
 
   if (resource === 'products') {
+    try {
+      const data = await apiFetch('/api/products');
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map((item) => ({
+          ...item,
+          id: item.productCode,
+          name: `${item.productName} (${item.productCode})`
+        }));
+      }
+    } catch {
+      // Use fallback catalog
+    }
     return [
-      { id: 1, name: 'Commercial Property (CP)' },
-      { id: 2, name: 'Commercial General Liability (CGL)' },
-      { id: 3, name: 'Medical Malpractice (MED_MAL)' },
-      { id: 4, name: 'Technology Errors & Omissions (TECH_EO)' },
-      { id: 5, name: 'Business Owners Policy (BOP)' },
-      { id: 6, name: 'Commercial Auto (CA)' }
+      { id: 'TECH_EO', productCode: 'TECH_EO', productName: 'Technology Errors & Omissions', name: 'Technology Errors & Omissions (TECH_EO)' },
+      { id: 'MED_MAL', productCode: 'MED_MAL', productName: 'Medical Malpractice', name: 'Medical Malpractice (MED_MAL)' },
+      { id: 'DNO', productCode: 'DNO', productName: 'Directors & Officers Liability', name: 'Directors & Officers Liability (DNO)' },
+      { id: 'CGL', productCode: 'CGL', productName: 'Commercial General Liability', name: 'Commercial General Liability (CGL)' },
+      { id: 'CP', productCode: 'CP', productName: 'Commercial Property', name: 'Commercial Property (CP)' }
     ];
   }
 

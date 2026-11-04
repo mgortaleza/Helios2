@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.helios2.config.SqlServerDataSourceFactory;
+import com.example.helios2.service.HeliosRulesRatingService;
+import com.example.helios2.service.HeliosRulesRatingService.RatingRequestDto;
+import com.example.helios2.service.HeliosRulesRatingService.RatingResponseDto;
 import com.example.helios2.service.HeliosService;
 import com.example.helios2.service.HeliosService.AddressDto;
 import com.example.helios2.service.HeliosService.AddressInput;
@@ -25,7 +28,9 @@ import com.example.helios2.service.HeliosService.CreatePartyRequest;
 import com.example.helios2.service.HeliosService.PartyDto;
 import com.example.helios2.service.HeliosService.PartyTypeCodeDto;
 import com.example.helios2.service.HeliosService.PolicyDto;
+import com.example.helios2.service.HeliosService.ProductDto;
 import com.example.helios2.service.HeliosService.QuoteDto;
+import com.example.helios2.service.HeliosService.RatingPlanDto;
 import com.example.helios2.service.HeliosService.SubmissionDto;
 import com.example.helios2.service.HeliosService.TaskDto;
 import com.example.helios2.service.HeliosService.ZipCodeDto;
@@ -33,6 +38,7 @@ import com.example.helios2.service.TenantRegistryService;
 import com.example.helios2.tenant.TenantConfig;
 import com.example.helios2.tenant.TenantContext;
 import com.example.helios2.tenant.TenantRoutingDataSource;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api")
@@ -41,14 +47,20 @@ public class HeliosController {
     private final TenantRegistryService tenantRegistryService;
     private final HeliosService heliosService;
     private final TenantRoutingDataSource tenantRoutingDataSource;
+    private final HeliosRulesRatingService ratingService;
+    private final ObjectMapper objectMapper;
 
     public HeliosController(
             TenantRegistryService tenantRegistryService,
             HeliosService heliosService,
-            TenantRoutingDataSource tenantRoutingDataSource) {
+            TenantRoutingDataSource tenantRoutingDataSource,
+            HeliosRulesRatingService ratingService,
+            ObjectMapper objectMapper) {
         this.tenantRegistryService = tenantRegistryService;
         this.heliosService = heliosService;
         this.tenantRoutingDataSource = tenantRoutingDataSource;
+        this.ratingService = ratingService;
+        this.objectMapper = objectMapper;
     }
 
     @GetMapping("/tenants")
@@ -168,6 +180,29 @@ public class HeliosController {
         return ResponseEntity.ok(created);
     }
 
+    @GetMapping("/products")
+    public List<ProductDto> getProducts() {
+        return heliosService.getAllProducts();
+    }
+
+    @GetMapping("/products/{productCode}/rating-plan")
+    public ResponseEntity<RatingPlanDto> getRatingPlan(@PathVariable("productCode") String productCode) {
+        return heliosService.getRatingPlanForProduct(productCode)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/rating/calculate")
+    public ResponseEntity<RatingResponseDto> calculateRate(@RequestBody RatingRequestDto req) {
+        ProductDto product = heliosService.getProductByCode(req.productCode()).orElse(null);
+        RatingPlanDto plan = (product != null && product.ratingPlan() != null)
+                ? product.ratingPlan()
+                : heliosService.getRatingPlanForProduct(req.productCode()).orElse(null);
+
+        RatingResponseDto resp = ratingService.rateQuote(req, product, plan);
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/quotes")
     public List<QuoteDto> getQuotes(@RequestParam(name = "submsnId", required = false) Integer submsnId) {
         if (submsnId != null) {
@@ -179,6 +214,9 @@ public class HeliosController {
     public record CreateQuoteRequest(
             Integer submsnId,
             String productCode,
+            String planCode,
+            String planName,
+            String ruleVersionId,
             String stateCode,
             String exposureVal,
             String limitAmt,
@@ -188,25 +226,88 @@ public class HeliosController {
             String serffTrackingNbr,
             String baseRate,
             String calcTrace,
-            String status
+            String factsJson,
+            String status,
+            Boolean autoRate,
+            Map<String, Object> dynamicAttributes
     ) {
     }
 
     @PostMapping("/quotes")
     public ResponseEntity<QuoteDto> createQuote(@RequestBody CreateQuoteRequest req) {
         int subId = (req.submsnId() != null) ? req.submsnId() : 0;
+        String prodCode = (req.productCode() != null && !req.productCode().isBlank())
+                ? req.productCode() : "TECH_EO";
+
+        ProductDto product = heliosService.getProductByCode(prodCode).orElse(null);
+        RatingPlanDto plan = (product != null && product.ratingPlan() != null)
+                ? product.ratingPlan()
+                : heliosService.getRatingPlanForProduct(prodCode).orElse(null);
+
+        String planCode = (req.planCode() != null && !req.planCode().isBlank())
+                ? req.planCode()
+                : (plan != null ? plan.planCode() : prodCode + "_COMMERCIAL");
+        String planName = (req.planName() != null && !req.planName().isBlank())
+                ? req.planName()
+                : (plan != null ? plan.planName() : planCode);
+        String versionId = (req.ruleVersionId() != null && !req.ruleVersionId().isBlank())
+                ? req.ruleVersionId()
+                : (plan != null ? plan.ruleVersionId() : "v1.0.0");
+
+        String finalPremium = req.premium();
+        String finalCalcTrace = req.calcTrace();
+        String finalFactsJson = req.factsJson();
+        Long calcPremiumCents = null;
+
+        // If autoRate is requested, or if premium is not yet calculated, invoke helios-rules
+        boolean shouldRate = Boolean.TRUE.equals(req.autoRate()) || finalPremium == null || finalPremium.isBlank();
+        if (shouldRate) {
+            RatingRequestDto ratingReq = new RatingRequestDto(
+                    subId,
+                    null,
+                    prodCode,
+                    planCode,
+                    versionId,
+                    req.stateCode(),
+                    null,
+                    product != null ? product.lineOfBusiness() : null,
+                    prodCode,
+                    null,
+                    req.exposureVal(),
+                    req.limitAmt(),
+                    req.retentionAmt(),
+                    req.scheduleMod(),
+                    null,
+                    null,
+                    req.dynamicAttributes()
+            );
+
+            RatingResponseDto ratingResp = ratingService.rateQuote(ratingReq, product, plan);
+            finalPremium = ratingResp.calculatedAmount();
+            calcPremiumCents = ratingResp.calculatedPremiumCents();
+            finalCalcTrace = String.join("\n", ratingResp.executionTrace());
+            try {
+                finalFactsJson = objectMapper.writeValueAsString(ratingResp.factsOutput());
+            } catch (Exception ignored) {}
+        }
+
         QuoteDto created = heliosService.createRatedQuote(
                 subId,
-                req.productCode(),
+                prodCode,
+                planCode,
+                planName,
+                versionId,
+                calcPremiumCents,
                 req.stateCode(),
                 req.exposureVal(),
                 req.limitAmt(),
                 req.retentionAmt(),
                 req.scheduleMod(),
-                req.premium(),
+                finalPremium,
                 req.serffTrackingNbr(),
                 req.baseRate(),
-                req.calcTrace(),
+                finalCalcTrace,
+                finalFactsJson,
                 req.status()
         );
         return ResponseEntity.ok(created);
