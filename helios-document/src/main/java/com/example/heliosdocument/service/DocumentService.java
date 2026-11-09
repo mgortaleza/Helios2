@@ -41,6 +41,12 @@ public class DocumentService {
     @Value("${spring.datasource.url}")
     private String masterDbUrl;
 
+    @Value("${helios2.db.server:dbtst.ads.netyx.net}")
+    private String dbServer;
+
+    @Value("${helios2.db.port:1433}")
+    private int dbPort;
+
     public DocumentService(DocgenClient docgenClient, DocumentStorageService storageService) {
         this.docgenClient = docgenClient;
         this.storageService = storageService;
@@ -49,7 +55,7 @@ public class DocumentService {
     public JdbcTemplate getTenantJdbcTemplate(int tenantId) {
         return tenantTemplates.computeIfAbsent(tenantId, id -> {
             String catalog = (id == 2) ? "HELIOS_TST" : "HELIOS2_TST";
-            String jdbcUrl = "jdbc:sqlserver://dbtst.ad.ortaleza.com:1433;databaseName=" + catalog
+            String jdbcUrl = "jdbc:sqlserver://" + dbServer + ":" + dbPort + ";databaseName=" + catalog
                     + ";integratedSecurity=true;encrypt=false;trustServerCertificate=true;sendStringParametersAsUnicode=false";
             HikariConfig config = new HikariConfig();
             config.setPoolName("HeliosDocument-TenantPool-" + id);

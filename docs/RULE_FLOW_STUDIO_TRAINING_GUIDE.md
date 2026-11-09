@@ -458,7 +458,7 @@ External ingestion systems, rating portals, or batch rating services can invoke 
 #### Execute Flow by ID:
 ```http
 POST /api/brms/flows/10002/execute HTTP/1.1
-Host: apptst.ad.ortaleza.com
+Host: apptst.ads.netyx.net
 Content-Type: application/json
 X-Tenant-ID: 1
 
@@ -474,7 +474,7 @@ X-Tenant-ID: 1
 #### Execute Active Flow by Rating Plan:
 ```http
 POST /api/brms/execute-by-plan HTTP/1.1
-Host: apptst.ad.ortaleza.com
+Host: apptst.ads.netyx.net
 Content-Type: application/json
 
 {

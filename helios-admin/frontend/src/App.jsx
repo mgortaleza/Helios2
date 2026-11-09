@@ -294,7 +294,7 @@ export default function App() {
   const [tenantForm, setTenantForm] = useState({
     tenantId: '',
     tenantName: '',
-    dbServerName: 'dbtst.ad.ortaleza.com',
+    dbServerName: 'dbtst.ads.netyx.net',
     dbCatalogName: 'HELIOS2_TST',
     primaryColor: '#013a12',
     accentColor: '#f59e0b',
@@ -768,7 +768,7 @@ export default function App() {
       setTenantForm({
         tenantId: String(nextId),
         tenantName: '',
-        dbServerName: 'dbtst.ad.ortaleza.com',
+        dbServerName: 'dbtst.ads.netyx.net',
         dbCatalogName: `HELIOS${nextId}_TST`,
         primaryColor: '#013a12',
         accentColor: '#f59e0b',
@@ -791,7 +791,7 @@ export default function App() {
     setTenantForm({
       tenantId: String(t.tenantId),
       tenantName: t.tenantName || '',
-      dbServerName: t.dbServerName || 'dbtst.ad.ortaleza.com',
+      dbServerName: t.dbServerName || 'dbtst.ads.netyx.net',
       dbCatalogName: t.dbCatalogName || 'HELIOS2_TST',
       primaryColor: t.primaryColor || '#013a12',
       accentColor: t.accentColor || '#f59e0b',
@@ -1642,7 +1642,7 @@ export default function App() {
                                   />
                                 </TableCell>
                                 <TableCell sx={{ fontSize: '0.78rem', fontFamily: 'monospace', color: '#0369a1' }}>
-                                  {u.externalSubjectId || `${u.username}@ad.ortaleza.com`}
+                                  {u.externalSubjectId || `${u.username}@ads.netyx.net`}
                                 </TableCell>
                                 <TableCell>
                                   <Chip
@@ -1708,9 +1708,9 @@ export default function App() {
                               Authenticates transparently using your Windows domain workstation session. When a user navigates to Helios, the browser negotiates a Kerberos ticket with the Spring Boot backend.
                             </Typography>
                             <Box sx={{ backgroundColor: '#0f172a', color: '#38bdf8', p: 1.5, borderRadius: '6px', fontSize: '0.74rem', fontFamily: 'monospace' }}>
-                              <div># Domain Realm: AD.ORTALEZA.COM</div>
-                              <div># SPN: HTTP/apptst.ad.ortaleza.com@AD.ORTALEZA.COM</div>
-                              <div># Matching: dbo.APP_USER.EXTERNAL_SUBJECT_ID = sAMAccountName + &apos;@AD.ORTALEZA.COM&apos;</div>
+                              <div># Domain Realm: ADS.NETYX.NET</div>
+                              <div># SPN: HTTP/apptst.ads.netyx.net@ADS.NETYX.NET</div>
+                              <div># Matching: dbo.APP_USER.EXTERNAL_SUBJECT_ID = sAMAccountName + &apos;@ADS.NETYX.NET&apos;</div>
                               <div># Fallback: NTLM Negotiate via Waffle Security Filter</div>
                             </Box>
                           </Paper>
@@ -1899,7 +1899,7 @@ export default function App() {
                               />
                             </Box>
                             <Typography variant="caption" sx={{ color: '#64748b', mt: 0.5, display: 'block' }}>
-                              dbtst.ad.ortaleza.com (Windows Auth Native DLL)
+                              dbtst.ads.netyx.net (Windows Auth Native DLL)
                             </Typography>
                           </CardContent>
                         </Card>
@@ -2165,7 +2165,7 @@ export default function App() {
                             </Box>
                             <Divider sx={{ mb: 2 }} />
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
-                              <strong>Server:</strong> <code>{diag?.masterDatabase?.serverName || 'DBTST'} (dbtst.ad.ortaleza.com:1433)</code>
+                              <strong>Server:</strong> <code>{diag?.masterDatabase?.serverName || 'DBTST'} (dbtst.ads.netyx.net:1433)</code>
                             </Typography>
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
                               <strong>Catalog:</strong> <code>{diag?.masterDatabase?.databaseName || 'MSTR_DATA'}</code>
@@ -2195,7 +2195,7 @@ export default function App() {
                             </Box>
                             <Divider sx={{ mb: 2 }} />
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
-                              <strong>Server:</strong> <code>{diag?.tenantDatabase?.serverName || 'DBTST'} (dbtst.ad.ortaleza.com:1433)</code>
+                              <strong>Server:</strong> <code>{diag?.tenantDatabase?.serverName || 'DBTST'} (dbtst.ads.netyx.net:1433)</code>
                             </Typography>
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
                               <strong>Catalog:</strong> <code>{diag?.tenantDatabase?.databaseName || activeTenantObj?.dbCatalogName || 'HELIOS2_TST'}</code>
@@ -2225,7 +2225,7 @@ export default function App() {
                             </Box>
                             <Divider sx={{ mb: 2 }} />
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
-                              <strong>Server:</strong> <code>DBTST (dbtst.ad.ortaleza.com:1433)</code>
+                              <strong>Server:</strong> <code>DBTST (dbtst.ads.netyx.net:1433)</code>
                             </Typography>
                             <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.82rem' }}>
                               <strong>Catalog:</strong> <code>HELIOS_RATING_DB</code>
@@ -3159,7 +3159,7 @@ export default function App() {
                   fullWidth
                   value={userForm.externalSubjectId}
                   onChange={(e) => setUserForm({ ...userForm, externalSubjectId: e.target.value })}
-                  helperText="e.g. mchang@ad.ortaleza.com or Entra OID"
+                  helperText="e.g. mchang@ads.netyx.net or Entra OID"
                 />
               </Grid>
             </Grid>

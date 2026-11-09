@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,9 @@ import com.example.helios2.tenant.TenantConfig;
 
 @Service
 public class TenantRegistryService {
+
+    @Value("${helios2.db.server:dbtst.ads.netyx.net}")
+    private String defaultDbServer;
 
     private final JdbcTemplate masterJdbcTemplate;
     private final SqlServerDataSourceFactory dataSourceFactory;
@@ -511,7 +515,7 @@ public class TenantRegistryService {
         String tenantName = (req.tenantName() != null && !req.tenantName().isBlank())
                 ? req.tenantName().trim() : ("Tenant " + assignedTenantId);
         String serverName = (req.dbServerName() != null && !req.dbServerName().isBlank())
-                ? req.dbServerName().trim() : "dbtst.ad.ortaleza.com";
+                ? req.dbServerName().trim() : defaultDbServer;
         String catalogName = (req.dbCatalogName() != null && !req.dbCatalogName().isBlank())
                 ? req.dbCatalogName().trim() : ("HELIOS" + assignedTenantId + "_TST");
 

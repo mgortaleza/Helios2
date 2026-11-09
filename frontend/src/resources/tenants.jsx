@@ -137,7 +137,7 @@ export function TenantCreate() {
         <TextInput
           source="dbServerName"
           label="SQL Server Host (DB_SERVER_NM)"
-          defaultValue="dbtst.ad.ortaleza.com"
+          defaultValue="dbtst.ads.netyx.net"
           validate={required()}
           fullWidth
         />

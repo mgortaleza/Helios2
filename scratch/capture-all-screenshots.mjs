@@ -10,7 +10,7 @@ const TENANTS = [
   {
     tenantId: 1,
     tenantName: 'Helios2 Default Tenant (HELIOS2_TST)',
-    dbServerName: 'dbtst.ad.ortaleza.com',
+    dbServerName: 'dbtst.ads.netyx.net',
     dbCatalogName: 'HELIOS2_TST',
     primaryColor: '#013a12',
     accentColor: '#f59e0b',
@@ -21,7 +21,7 @@ const TENANTS = [
   {
     tenantId: 2,
     tenantName: 'Helios Legacy Tenant (HELIOS_TST)',
-    dbServerName: 'dbtst.ad.ortaleza.com',
+    dbServerName: 'dbtst.ads.netyx.net',
     dbCatalogName: 'HELIOS_TST',
     primaryColor: '#0f172a',
     accentColor: '#38bdf8',
@@ -306,7 +306,7 @@ function createServer(staticRoot) {
             masterDatabase: {
               connected: true,
               databaseName: 'MSTR_DATA',
-              serverName: 'dbtst.ad.ortaleza.com (DBTST)',
+              serverName: 'dbtst.ads.netyx.net (DBTST)',
               authenticatedUser: 'AD\\mark',
               loginUser: 'AD\\mark',
               sqlVersion: 'Microsoft SQL Server 2025 (RTM) - 17.0.1000.7 (X64)'
@@ -314,7 +314,7 @@ function createServer(staticRoot) {
             tenantDatabase: {
               connected: true,
               databaseName: activeTenant.dbCatalogName,
-              serverName: 'dbtst.ad.ortaleza.com (DBTST)',
+              serverName: 'dbtst.ads.netyx.net (DBTST)',
               authenticatedUser: 'AD\\mark',
               loginUser: 'AD\\mark',
               sqlVersion: 'Microsoft SQL Server 2025 (RTM) - 17.0.1000.7 (X64)'

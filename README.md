@@ -15,10 +15,10 @@ Link to live dev build:
 | Component | Verified Running Version | Build Target / Platform | Notes |
 | :--- | :--- | :--- | :--- |
 | **Spring Boot** | **`3.5.16`** | `spring-boot-starter-parent:3.5.16` | Standardized across all Helios microservices (`Helios2`, `helios-document`, `helios-admin`, `helios-rating`, `helios-docgen`). Verified in live startup logs (`:: Spring Boot :: (v3.5.16)`). |
-| **Java Runtime (JVM)** | **`Java 25.0.4.1`** | `Eclipse Adoptium jdk-25.0.4.1-hotspot` | Live JVM executing Tomcat 11 services on `apptst.ad.ortaleza.com`. |
+| **Java Runtime (JVM)** | **`Java 25.0.4.1`** | `Eclipse Adoptium jdk-25.0.4.1-hotspot` | Live JVM executing Tomcat 11 services on `apptst.ads.netyx.net`. |
 | **Java Language Target** | **`Java 25`** | `<java.version>25</java.version>` | Full virtual threads (`Loom`) and pattern matching support. Secondary Adoptium JDK 21 installed for backward-compatible javac staging. |
 | **Application Server** | **Apache Tomcat 11.0.3** | `Tomcat11`, `Tomcat11Document`, `Tomcat11Admin`, `Tomcat11Rating`, `Tomcat11Docgen` | High-performance multi-instance procrun architecture with Nginx reverse proxy. |
-| **Database** | **Microsoft SQL Server 2025** | `dbtst.ad.ortaleza.com:1433` | Windows Integrated Authentication (`mssql-jdbc_auth-13.6.0.x64.dll`). |
+| **Database** | **Microsoft SQL Server 2025** | `dbtst.ads.netyx.net:1433` | Windows Integrated Authentication (`mssql-jdbc_auth-13.6.0.x64.dll`). |
 | **Document Engine** | **Aspose.Words for Java** | Word (`.docx`) DOM Manipulation & Direct PDF Generation | Tabular row cloning, dynamic tag replacement, blank line suppression, and native PDF rendering. |
 
 ---
@@ -65,8 +65,8 @@ https://admin.netyx.net
      - `DB_SERVER_NM` (`VARCHAR(100)`)
      - `DB_CATALOG_NM` (`VARCHAR(100)`)
    - Configured Tenants:
-     - **Tenant 1 (Default)**: `HELIOS2_TST` on `dbtst.ad.ortaleza.com`
-     - **Tenant 2 (Legacy)**: `HELIOS_TST` on `dbtst.ad.ortaleza.com`
+     - **Tenant 1 (Default)**: `HELIOS2_TST` on `dbtst.ads.netyx.net`
+     - **Tenant 2 (Legacy)**: `HELIOS_TST` on `dbtst.ads.netyx.net`
 
 2. **Dynamic Tenant Routing (Spring Boot)**
    - `TenantFilter` intercepts incoming HTTP requests and extracts the `X-Tenant-ID` header (or `?tenantId=` query parameter, defaulting to Tenant `1`).

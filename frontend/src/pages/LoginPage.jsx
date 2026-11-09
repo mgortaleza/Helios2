@@ -159,7 +159,7 @@ export function LoginPage({ onLoginSuccess, tenants: propTenants = [], inactivit
     if (type === 'windows') {
       setSsoModalData({
         title: 'Windows Integrated Authentication (Kerberos / SPNEGO)',
-        desc: 'Windows Domain Single Sign-On authenticates via Active Directory realm AD.ORTALEZA.COM. When enabled, your workstation Kerberos ticket automatically grants access to your tenant account mapped to dbo.APP_USER.EXTERNAL_SUBJECT_ID (e.g. mchang@AD.ORTALEZA.COM).',
+        desc: 'Windows Domain Single Sign-On authenticates via Active Directory realm ADS.NETYX.NET. When enabled, your workstation Kerberos ticket automatically grants access to your tenant account mapped to dbo.APP_USER.EXTERNAL_SUBJECT_ID (e.g. mchang@ADS.NETYX.NET).',
         provider: 'WINDOWS_AD'
       });
     } else {
@@ -424,7 +424,7 @@ export function LoginPage({ onLoginSuccess, tenants: propTenants = [], inactivit
                   '&:hover': { borderColor: '#94a3b8', backgroundColor: '#f8fafc' }
                 }}
               >
-                Sign in with Windows Domain (AD.ORTALEZA.COM)
+                Sign in with Windows Domain (ADS.NETYX.NET)
               </Button>
 
               <Button
@@ -468,7 +468,7 @@ export function LoginPage({ onLoginSuccess, tenants: propTenants = [], inactivit
             <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#0369a1' }}>
               dbo.APP_USER.AUTH_PROVIDER = &apos;{ssoModalData.provider}&apos;
               <br />
-              dbo.APP_USER.EXTERNAL_SUBJECT_ID = user@ad.ortaleza.com / Azure-OID
+              dbo.APP_USER.EXTERNAL_SUBJECT_ID = user@ads.netyx.net / Azure-OID
             </Typography>
           </Paper>
           <Alert severity="info" sx={{ fontSize: '0.85rem' }}>

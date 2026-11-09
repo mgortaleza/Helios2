@@ -22,10 +22,10 @@ public class SqlServerDataSourceFactory {
     @Value("${helios2.db.port:1433}")
     private int defaultPort;
 
-    @Value("${helios2.krb5.realm:AD.ORTALEZA.COM}")
+    @Value("${helios2.krb5.realm:ADS.NETYX.NET}")
     private String krb5Realm;
 
-    @Value("${helios2.krb5.kdc:ad.ortaleza.com}")
+    @Value("${helios2.krb5.kdc:ads.netyx.net}")
     private String krb5Kdc;
 
     public static boolean isWindows() {

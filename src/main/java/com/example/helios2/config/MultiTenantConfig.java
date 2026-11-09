@@ -2,11 +2,15 @@ package com.example.helios2.config;
 
 import javax.sql.DataSource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.PropertySource;
+import org.springframework.context.annotation.PropertySources;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -15,9 +19,17 @@ import com.example.helios2.service.TenantRegistryService;
 import com.example.helios2.tenant.TenantRoutingDataSource;
 
 @Configuration
+@PropertySources({
+    @PropertySource(value = "file:C:/helios-config/database.properties", ignoreResourceNotFound = true),
+    @PropertySource(value = "file:C:/helios-storage/database.properties", ignoreResourceNotFound = true),
+    @PropertySource(value = "file:./database.properties", ignoreResourceNotFound = true),
+    @PropertySource(value = "file:../database.properties", ignoreResourceNotFound = true)
+})
 public class MultiTenantConfig {
 
-    @Value("${helios2.db.server:dbtst.ad.ortaleza.com}")
+    private static final Logger log = LoggerFactory.getLogger(MultiTenantConfig.class);
+
+    @Value("${helios2.db.server:dbtst.ads.netyx.net}")
     private String dbServer;
 
     @Value("${helios2.db.master-catalog:MSTR_DATA}")
@@ -28,6 +40,7 @@ public class MultiTenantConfig {
 
     @Bean(name = "masterDataSource")
     public DataSource masterDataSource(SqlServerDataSourceFactory factory) {
+        log.info("Connecting Master Data Source (MSTR_DATA) to SQL Server at '{}', catalog '{}'", dbServer, masterCatalog);
         return factory.createDataSource("Helios2-Master-MSTR_DATA", dbServer, masterCatalog);
     }
 

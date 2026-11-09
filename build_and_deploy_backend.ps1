@@ -16,13 +16,21 @@ Copy-Item -Path "c:\DEV\helios2\helios-admin\src\main\java\*" -Destination "$sta
 Copy-Item -Path "c:\DEV\helios2\helios-document\src\main\java\*" -Destination "$stagingDir\doc_src" -Recurse -Force
 Copy-Item -Path "c:\DEV\helios2\helios-docgen\src\main\java\*" -Destination "$stagingDir\docgen_src" -Recurse -Force
 
-Write-Host "Updating application.properties on target Tomcat instances..."
+Write-Host "Updating application.properties and external database.properties on target Tomcat instances..."
+if (-not (Test-Path "\\10.1.10.56\c$\helios-config")) {
+    New-Item -ItemType Directory -Path "\\10.1.10.56\c$\helios-config" -Force | Out-Null
+}
+Copy-Item -Path "c:\DEV\helios2\database.properties" -Destination "\\10.1.10.56\c$\helios-config\database.properties" -Force
+Copy-Item -Path "c:\DEV\helios2\database.properties" -Destination "\\10.1.10.56\c$\helios-storage\database.properties" -Force
 Copy-Item -Path "c:\DEV\helios2\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\Tomcat11\webapps\helios2\WEB-INF\classes\application.properties" -Force
 Copy-Item -Path "c:\DEV\helios2\helios-admin\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\tomcat11-admin\webapps\helios-admin\WEB-INF\classes\application.properties" -Force
 Copy-Item -Path "c:\DEV\helios2\helios-document\src\main\resources\application.properties" -Destination "\\10.1.10.56\c$\Tomcat11-Document\webapps\helios-document\WEB-INF\classes\application.properties" -Force
+if (Test-Path "c:\DEV\helios2\helios-admin\src\main\resources\static") {
+    Copy-Item -Path "c:\DEV\helios2\helios-admin\src\main\resources\static\*" -Destination "\\10.1.10.56\c$\tomcat11-admin\webapps\helios-admin\WEB-INF\classes\static\" -Recurse -Force
+}
 
 Write-Host "=== 2. Compiling on APPTST via Invoke-Command ==="
-Invoke-Command -ComputerName apptst.ad.ortaleza.com -ScriptBlock {
+Invoke-Command -ComputerName apptst.ads.netyx.net -ScriptBlock {
     $ErrorActionPreference = "Continue"
     $javac = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\javac.exe"
     $servlet = "C:\Tomcat11\lib\servlet-api.jar"

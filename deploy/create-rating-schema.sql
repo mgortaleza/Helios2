@@ -1,6 +1,6 @@
 -- ============================================================================
 -- HELIOS_RATING_DB Schema Initialization & Actuarial Seed Data
--- Database: HELIOS_RATING_DB on dbtst.ad.ortaleza.com:1433
+-- Database: HELIOS_RATING_DB on dbtst.ads.netyx.net:1433
 -- Supports: Multi-Product, Rating Plans, State DOI / SERFF Approval Versioning
 -- ============================================================================
 
