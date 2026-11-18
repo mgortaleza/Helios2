@@ -1,13 +1,20 @@
 $ErrorActionPreference = "Stop"
 
-$servletJar = "C:\Users\mark.AD\.m2\repository\jakarta\servlet\jakarta.servlet-api\6.0.0\jakarta.servlet-api-6.0.0.jar"
+$servletJar = if (Test-Path "C:\Users\mark.AD\.m2\repository\jakarta\servlet\jakarta.servlet-api\6.0.0\jakarta.servlet-api-6.0.0.jar") {
+    "C:\Users\mark.AD\.m2\repository\jakarta\servlet\jakarta.servlet-api\6.0.0\jakarta.servlet-api-6.0.0.jar"
+} else {
+    "\\10.1.10.56\c$\Tomcat11\lib\servlet-api.jar"
+}
 $mvelJar = "C:\Users\mark.AD\.m2\repository\org\mvel\mvel2\2.5.2.Final\mvel2-2.5.2.Final.jar"
-$javac = "C:\Program Files\Java\jdk-21.0.10\bin\javac.exe"
-$jar = "C:\Program Files\Java\jdk-21.0.10\bin\jar.exe"
+$jdkHome = if ($env:JAVA_HOME -and (Test-Path "$env:JAVA_HOME\bin\javac.exe")) { $env:JAVA_HOME } else { "$env:LOCALAPPDATA\Programs\Eclipse Adoptium\jdk-25.0.5.8-hotspot" }
+$javac = "$jdkHome\bin\javac.exe"
+$jar = "$jdkHome\bin\jar.exe"
 
 $libPath = "\\10.1.10.56\c$\tomcat11-rating\webapps\helios-rating\WEB-INF\lib"
 # Ensure mvel2 is in lib
-Copy-Item $mvelJar "$libPath\mvel2-2.5.2.Final.jar" -Force
+if (Test-Path $mvelJar) {
+    Copy-Item $mvelJar "$libPath\mvel2-2.5.2.Final.jar" -Force
+}
 
 $jars = ((Get-ChildItem -Path "$libPath\*.jar" | Select-Object -ExpandProperty FullName) + $servletJar) -join ";"
 $javaFiles = Get-ChildItem -Path "c:\DEV\Helios2\helios-rating\src\main\java" -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName

@@ -32,7 +32,7 @@ if (Test-Path "c:\DEV\helios2\helios-admin\src\main\resources\static") {
 Write-Host "=== 2. Compiling on APPTST via Invoke-Command ==="
 Invoke-Command -ComputerName apptst.ads.netyx.net -ScriptBlock {
     $ErrorActionPreference = "Continue"
-    $javac = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\javac.exe"
+    $javac = "C:\Program Files\Eclipse Adoptium\jdk-25.0.5.8-hotspot\bin\javac.exe"
     $servlet = "C:\Tomcat11\lib\servlet-api.jar"
     
     # 2a. Compile helios2
