@@ -301,6 +301,7 @@ export default function App() {
     brandTitle: 'Helios',
     brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
     enabledModules: 'dashboard,policy,submissions,claims',
+    autoReplyEnabled: true,
     createDatabase: true,
     copySchema: true,
     seedInitialData: true
@@ -775,6 +776,7 @@ export default function App() {
         brandTitle: 'Helios',
         brandSubtitle: 'INSURANCE MANAGEMENT SUITE',
         enabledModules: 'dashboard,policy,submissions,claims',
+        autoReplyEnabled: true,
         createDatabase: true,
         copySchema: true,
         seedInitialData: true
@@ -798,11 +800,31 @@ export default function App() {
       brandTitle: t.brandTitle || 'Helios',
       brandSubtitle: t.brandSubtitle || 'INSURANCE MANAGEMENT SUITE',
       enabledModules: t.enabledModules || 'dashboard,policy,submissions,claims',
+      autoReplyEnabled: t.autoReplyEnabled !== false,
       createDatabase: false,
       copySchema: false,
       seedInitialData: false
     });
     setOpenTenantDialog(true);
+  };
+
+  const handleToggleTenantAutoReply = async (t) => {
+    const nextVal = t.autoReplyEnabled === false ? true : false;
+    try {
+      await apiFetch(`/api/tenants/${t.tenantId}/auto-reply?enabled=${nextVal}`, {
+        method: 'PUT'
+      });
+      setTenants((prev) =>
+        prev.map((item) => (item.tenantId === t.tenantId ? { ...item, autoReplyEnabled: nextVal } : item))
+      );
+      setFlash({
+        type: 'success',
+        text: `Incoming Documents Auto-Reply ${nextVal ? 'ENABLED' : 'DISABLED'} for Tenant #${t.tenantId} (${t.tenantName}).`
+      });
+      loadDiagnostics();
+    } catch (err) {
+      setFlash({ type: 'error', text: `Failed to toggle auto-reply: ${err.message}` });
+    }
   };
 
   const handleSaveTenant = async (e) => {
@@ -822,6 +844,7 @@ export default function App() {
             brandTitle: tenantForm.brandTitle.trim(),
             brandSubtitle: tenantForm.brandSubtitle.trim(),
             enabledModules: tenantForm.enabledModules,
+            autoReplyEnabled: Boolean(tenantForm.autoReplyEnabled !== false),
             createDatabase: tenantForm.createDatabase,
             copySchema: tenantForm.copySchema,
             seedInitialData: tenantForm.seedInitialData
@@ -852,7 +875,8 @@ export default function App() {
             accentColor: tenantForm.accentColor,
             brandTitle: tenantForm.brandTitle.trim(),
             brandSubtitle: tenantForm.brandSubtitle.trim(),
-            enabledModules: tenantForm.enabledModules
+            enabledModules: tenantForm.enabledModules,
+            autoReplyEnabled: Boolean(tenantForm.autoReplyEnabled !== false)
           })
         });
         setOpenTenantDialog(false);
@@ -1194,6 +1218,7 @@ export default function App() {
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>SQL CATALOG</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>THEME &amp; BRANDING</TableCell>
                             <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>TENANT MODULES</TableCell>
+                            <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem' }}>INCOMING AUTO-REPLY</TableCell>
                             <TableCell align="right" sx={{ fontWeight: 700, fontSize: '0.75rem' }}>ACTIONS</TableCell>
                           </TableRow>
                         </TableHead>
@@ -1234,6 +1259,23 @@ export default function App() {
                                     .map((m) => (
                                       <Chip key={m} label={m} size="small" sx={{ fontSize: '0.7rem', height: 22 }} />
                                     ))}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Switch
+                                    size="small"
+                                    checked={t.autoReplyEnabled !== false}
+                                    onChange={() => handleToggleTenantAutoReply(t)}
+                                    color="success"
+                                  />
+                                  <Chip
+                                    size="small"
+                                    label={t.autoReplyEnabled !== false ? 'ON' : 'OFF'}
+                                    color={t.autoReplyEnabled !== false ? 'success' : 'default'}
+                                    variant={t.autoReplyEnabled !== false ? 'filled' : 'outlined'}
+                                    sx={{ fontSize: '0.7rem', height: 20, fontWeight: 700 }}
+                                  />
                                 </Box>
                               </TableCell>
                               <TableCell align="right">
@@ -2092,7 +2134,7 @@ export default function App() {
                                               Target: <code>{data.targetInbox || 'C:\\helios-storage\\documents\\tenant_1\\inbox'}</code>
                                               {data.emailsIngested != null && ` • ${data.emailsIngested} Emails Ingested`}
                                               {data.autoRepliesSent != null && ` • ${data.autoRepliesSent} Auto-Replies`}
-                                              {data.autoReplyEnabled && ` • Auto-Reply: Active`}
+                                              {` • Tenant #${selectedTenantId} Auto-Reply: ${activeTenantObj?.autoReplyEnabled !== false ? 'Active' : 'Disabled'}`}
                                               {data.lastRun && ` • Last Poll: ${data.lastRun}`}
                                             </Typography>
                                             {data.statusFile && (
@@ -2752,6 +2794,34 @@ export default function App() {
                   );
                 })}
               </Box>
+            </Box>
+
+            <Divider />
+
+            <Box sx={{ p: 1.5, bgcolor: '#f8fafc', borderRadius: 1.5, border: '1px solid #e2e8f0' }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', display: 'block', mb: 0.5 }}>
+                INCOMING DOCUMENTS &amp; INTAKE SETTINGS:
+              </Typography>
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={tenantForm.autoReplyEnabled !== false}
+                    onChange={(e) => setTenantForm({ ...tenantForm, autoReplyEnabled: e.target.checked })}
+                    color="success"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" sx={{ fontSize: '0.84rem', fontWeight: 600, color: '#1e293b' }}>
+                      Auto-Reply for Incoming Documents ({tenantForm.autoReplyEnabled !== false ? 'Enabled' : 'Disabled'})
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                      Automatically send submission receipt acknowledgements via email when incoming documents arrive in this tenant&apos;s intake inbox.
+                    </Typography>
+                  </Box>
+                }
+              />
             </Box>
           </DialogContent>
           <DialogActions>

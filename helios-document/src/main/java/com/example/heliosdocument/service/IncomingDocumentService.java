@@ -42,17 +42,49 @@ public class IncomingDocumentService {
     private final DocumentStorageService storageService;
     private final EmlParserService emlParserService;
     private final DocgenClient docgenClient;
+    private final JdbcTemplate masterJdbcTemplate;
 
     public IncomingDocumentService(
             DocumentService documentService,
             DocumentStorageService storageService,
             EmlParserService emlParserService,
-            DocgenClient docgenClient
+            DocgenClient docgenClient,
+            JdbcTemplate masterJdbcTemplate
     ) {
         this.documentService = documentService;
         this.storageService = storageService;
         this.emlParserService = emlParserService;
         this.docgenClient = docgenClient;
+        this.masterJdbcTemplate = masterJdbcTemplate;
+    }
+
+    public boolean isTenantAutoReplyEnabled(int tenantId) {
+        try {
+            Boolean enabled = masterJdbcTemplate.queryForObject(
+                    "SELECT AUTO_REPLY_ENABLED FROM dbo.TENANT_DB_CONFIG WHERE TENANT_ID = ?",
+                    Boolean.class,
+                    tenantId
+            );
+            return enabled == null || enabled;
+        } catch (Exception e) {
+            log.warn("Could not query AUTO_REPLY_ENABLED for tenant {}, defaulting to true: {}", tenantId, e.getMessage());
+            return true;
+        }
+    }
+
+    public boolean setTenantAutoReplyEnabled(int tenantId, boolean enabled) {
+        try {
+            int rows = masterJdbcTemplate.update(
+                    "UPDATE dbo.TENANT_DB_CONFIG SET AUTO_REPLY_ENABLED = ? WHERE TENANT_ID = ?",
+                    enabled ? 1 : 0,
+                    tenantId
+            );
+            log.info("Tenant #{}: Set incoming documents auto-reply to {}", tenantId, enabled);
+            return rows > 0;
+        } catch (Exception e) {
+            log.error("Failed to update auto-reply setting for tenant {}: {}", tenantId, e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -151,7 +183,9 @@ public class IncomingDocumentService {
         }
 
         if (processedCount > 0) {
-            log.info("Tenant #{}: Processed and queued {} incoming document(s)", tenantId, processedCount);
+            boolean autoReply = isTenantAutoReplyEnabled(tenantId);
+            log.info("Tenant #{}: Processed and queued {} incoming document(s) (Auto-Reply is {})",
+                    tenantId, processedCount, autoReply ? "ENABLED" : "DISABLED");
         }
 
         return processedCount;

@@ -446,6 +446,36 @@ public class DocumentController {
         return ResponseEntity.ok(Map.of("success", ok, "incomingId", incomingId));
     }
 
+    @GetMapping("/incoming/settings")
+    public ResponseEntity<Map<String, Object>> getIncomingSettings(
+            @RequestHeader(name = "X-Tenant-ID", required = false) Integer headerTenantId,
+            @RequestParam(name = "tenantId", required = false) Integer queryTenantId) {
+        int tenantId = (queryTenantId != null && queryTenantId > 0)
+                ? queryTenantId
+                : (headerTenantId != null && headerTenantId > 0) ? headerTenantId : 1;
+        boolean autoReply = incomingDocumentService.isTenantAutoReplyEnabled(tenantId);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", autoReply
+        ));
+    }
+
+    @PostMapping("/incoming/settings/auto-reply")
+    public ResponseEntity<Map<String, Object>> setIncomingAutoReply(
+            @RequestHeader(name = "X-Tenant-ID", required = false) Integer headerTenantId,
+            @RequestParam(name = "tenantId", required = false) Integer queryTenantId,
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        int tenantId = (queryTenantId != null && queryTenantId > 0)
+                ? queryTenantId
+                : (headerTenantId != null && headerTenantId > 0) ? headerTenantId : 1;
+        boolean ok = incomingDocumentService.setTenantAutoReplyEnabled(tenantId, enabled);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", enabled,
+                "success", ok
+        ));
+    }
+
     // ========================================================================
     // 3. SERVICE DIAGNOSTICS
     // ========================================================================

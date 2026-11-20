@@ -107,6 +107,34 @@ public class HeliosController {
         return ResponseEntity.ok(result);
     }
 
+    @GetMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> getTenantAutoReply(@PathVariable("tenantId") int tenantId) {
+        boolean enabled = tenantRegistryService.isTenantAutoReplyEnabled(tenantId);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", enabled
+        ));
+    }
+
+    @PutMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> setTenantAutoReply(
+            @PathVariable("tenantId") int tenantId,
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        boolean updated = tenantRegistryService.updateTenantAutoReply(tenantId, enabled);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", enabled,
+                "success", updated
+        ));
+    }
+
+    @PostMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> postTenantAutoReply(
+            @PathVariable("tenantId") int tenantId,
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        return setTenantAutoReply(tenantId, enabled);
+    }
+
     @GetMapping("/roles")
     public List<TenantRegistryService.TenantRoleDto> getRoles(
             @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
@@ -301,13 +329,18 @@ public class HeliosController {
     }
 
     @GetMapping("/diagnostics/gmailcap")
-    public ResponseEntity<Map<String, Object>> getGmailCapDiagnostics() {
+    public ResponseEntity<Map<String, Object>> getGmailCapDiagnostics(
+            @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
+        int tenantId = (tenantIdParam != null && tenantIdParam > 0) ? tenantIdParam : 1;
+        boolean tenantAutoReply = tenantRegistryService.isTenantAutoReplyEnabled(tenantId);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("service", "gmailcap");
         result.put("application", "Helios GmailCap Python Ingestion Service");
         result.put("executionMode", "Python Scheduled Daemon");
         result.put("interval", "60s (Every 1 minute)");
-        result.put("targetInbox", "C:\\helios-storage\\documents\\tenant_1\\inbox");
+        result.put("targetInbox", "C:\\helios-storage\\documents\\tenant_" + tenantId + "\\inbox");
+        result.put("targetTenantId", tenantId);
+        result.put("tenantAutoReplyEnabled", tenantAutoReply);
         result.put("logDirectory", "C:\\helios-storage\\logs");
         result.put("serverTime", LocalDateTime.now().toString());
 

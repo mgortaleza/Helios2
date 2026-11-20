@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 
 # ==============================================================================
 # Configuration & Credentials
@@ -170,6 +171,61 @@ def should_skip_auto_reply(msg: email.message.Message, sender_email: str) -> tup
     return False, ""
 
 
+def get_tenant_auto_reply_setting(tenant_id: int) -> tuple[bool, str]:
+    """
+    Checks if auto-reply for incoming documents is enabled for the specified tenant.
+    First checks if the global auto-reply master switch is enabled.
+    Then queries the active Helios Admin / Core API across remote and local host endpoints.
+    Falls back to True if the tenant API is currently restarting/unreachable.
+    """
+    if not AUTO_REPLY_ENABLED:
+        return False, "Auto-reply is disabled globally via GMAIL_AUTO_REPLY configuration"
+
+    endpoints = [
+        f"http://apptst:8090/api/tenants/{tenant_id}/auto-reply",
+        f"http://10.1.10.56:8090/api/tenants/{tenant_id}/auto-reply",
+        f"http://apptst/api/tenants/{tenant_id}/auto-reply",
+        f"http://10.1.10.56/api/tenants/{tenant_id}/auto-reply",
+        f"http://127.0.0.1:8090/api/tenants/{tenant_id}/auto-reply",
+        f"http://127.0.0.1:8082/helios-admin/api/tenants/{tenant_id}/auto-reply",
+        f"http://127.0.0.1:8080/helios2/api/tenants/{tenant_id}/auto-reply",
+        f"http://apptst:8086/helios-document/api/v1/documents/incoming/settings?tenantId={tenant_id}",
+        f"http://10.1.10.56:8086/helios-document/api/v1/documents/incoming/settings?tenantId={tenant_id}",
+        f"http://127.0.0.1:8086/helios-document/api/v1/documents/incoming/settings?tenantId={tenant_id}",
+        "http://apptst:8090/api/tenants",
+        "http://10.1.10.56:8090/api/tenants",
+        "http://apptst/api/tenants",
+        "http://10.1.10.56/api/tenants",
+        "http://127.0.0.1:8090/api/tenants",
+        "http://127.0.0.1:8082/helios-admin/api/tenants",
+        "http://127.0.0.1:8080/helios2/api/tenants",
+    ]
+
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Helios-GmailCap/2.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(payload, dict) and "autoReplyEnabled" in payload:
+                        is_enabled = bool(payload["autoReplyEnabled"])
+                        if not is_enabled:
+                            return False, f"Auto-reply is toggled OFF for Tenant #{tenant_id} in Admin Settings"
+                        return True, f"Auto-reply is enabled for Tenant #{tenant_id}"
+                    elif isinstance(payload, list):
+                        for item in payload:
+                            if item.get("tenantId") == tenant_id:
+                                is_enabled = bool(item.get("autoReplyEnabled", True))
+                                if not is_enabled:
+                                    return False, f"Auto-reply is toggled OFF for Tenant #{tenant_id} in Admin Settings"
+                                return True, f"Auto-reply is enabled for Tenant #{tenant_id}"
+        except Exception:
+            continue
+
+    # Fallback to enabled if tenant endpoint could not be polled
+    return True, "Defaulted to enabled (tenant registry unavailable)"
+
+
 def send_auto_reply(
     to_name: str,
     to_email: str,
@@ -325,6 +381,13 @@ def run_intake_cycle(target_dir: str, log_dir: str) -> dict:
     last_auto_reply_to = ""
     err_msg = None
 
+    # Determine target tenant from target_dir (e.g. tenant_1, tenant_2, inbox, inbox2)
+    tenant_match = re.search(r"tenant_?(\d+)", target_dir, re.IGNORECASE)
+    if not tenant_match:
+        tenant_match = re.search(r"inbox(\d+)", target_dir, re.IGNORECASE)
+    tenant_id = int(tenant_match.group(1)) if tenant_match else int(os.getenv("HELIOS_TENANT_ID", "1"))
+    tenant_reply_ok, tenant_reply_reason = get_tenant_auto_reply_setting(tenant_id)
+
     try:
         # 1. Establish secure SSL connection to Gmail IMAP server
         print(f"Connecting to IMAP {IMAP_SERVER}:{IMAP_PORT}...")
@@ -382,11 +445,14 @@ def run_intake_cycle(target_dir: str, log_dir: str) -> dict:
 
                 # 5. Send Auto-Reply
                 skip, skip_reason = should_skip_auto_reply(msg, to_email)
-                if skip:
+                if not tenant_reply_ok:
+                    auto_replies_skipped += 1
+                    print(f"Skipping auto-reply for ID {email_id_str} ({to_email}): {tenant_reply_reason}")
+                elif skip:
                     auto_replies_skipped += 1
                     print(f"Skipping auto-reply for ID {email_id_str} ({to_email}): {skip_reason}")
                 else:
-                    print(f"Sending auto-reply to '{to_name}' <{to_email}> for ID {email_id_str}...")
+                    print(f"Sending auto-reply to '{to_name}' <{to_email}> for ID {email_id_str} (Tenant #{tenant_id})...")
                     ok, reply_info = send_auto_reply(
                         to_name=to_name,
                         to_email=to_email,
@@ -427,8 +493,10 @@ def run_intake_cycle(target_dir: str, log_dir: str) -> dict:
             "interval": "60s (Every 1 minute)",
             "emailsIngested": processed_count,
             "targetInbox": target_dir,
+            "targetTenantId": tenant_id,
+            "tenantAutoReplyEnabled": tenant_reply_ok,
             "lastSubject": last_subject,
-            "autoReplyEnabled": AUTO_REPLY_ENABLED,
+            "autoReplyEnabled": tenant_reply_ok and AUTO_REPLY_ENABLED,
             "autoRepliesSent": auto_replies_sent,
             "autoRepliesSkipped": auto_replies_skipped,
             "lastAutoReplyTo": last_auto_reply_to,

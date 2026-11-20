@@ -42,6 +42,19 @@ public class TenantRegistryService {
         String brandSubtitle = rs.getString("BRAND_SUBTITLE");
         String enabledModules = rs.getString("ENABLED_MODULES");
 
+        boolean autoReply = true;
+        try {
+            Object obj = rs.getObject("AUTO_REPLY_ENABLED");
+            if (obj != null) {
+                if (obj instanceof Boolean b) {
+                    autoReply = b;
+                } else if (obj instanceof Number n) {
+                    autoReply = n.intValue() != 0;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
         return new TenantConfig(
                 tenantId,
                 rs.getString("TENANT_NAME"),
@@ -51,7 +64,8 @@ public class TenantRegistryService {
                 (accentColor != null && !accentColor.isBlank()) ? accentColor : defaultAccent,
                 (brandTitle != null && !brandTitle.isBlank()) ? brandTitle : defaultTitle,
                 (brandSubtitle != null && !brandSubtitle.isBlank()) ? brandSubtitle : defaultSubtitle,
-                (enabledModules != null && !enabledModules.isBlank()) ? enabledModules : defaultModules
+                (enabledModules != null && !enabledModules.isBlank()) ? enabledModules : defaultModules,
+                autoReply
         );
     };
 
@@ -78,6 +92,8 @@ public class TenantRegistryService {
                         ALTER TABLE dbo.TENANT_DB_CONFIG ADD BRAND_SUBTITLE VARCHAR(120) NULL;
                     IF COL_LENGTH('dbo.TENANT_DB_CONFIG', 'ENABLED_MODULES') IS NULL
                         ALTER TABLE dbo.TENANT_DB_CONFIG ADD ENABLED_MODULES VARCHAR(200) NULL;
+                    IF COL_LENGTH('dbo.TENANT_DB_CONFIG', 'AUTO_REPLY_ENABLED') IS NULL
+                        ALTER TABLE dbo.TENANT_DB_CONFIG ADD AUTO_REPLY_ENABLED BIT NOT NULL CONSTRAINT DF_TENANT_AUTO_REPLY DEFAULT 1;
                     """);
 
             masterJdbcTemplate.update("""
@@ -393,7 +409,7 @@ public class TenantRegistryService {
     public List<TenantConfig> getAllTenants() {
         ensureMasterUiColumns();
         String sql = "SELECT TENANT_ID, TENANT_NAME, DB_SERVER_NM, DB_CATALOG_NM, "
-                   + "PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES "
+                   + "PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES, AUTO_REPLY_ENABLED "
                    + "FROM dbo.TENANT_DB_CONFIG ORDER BY TENANT_ID ASC";
         return masterJdbcTemplate.query(sql, TENANT_ROW_MAPPER);
     }
@@ -401,7 +417,7 @@ public class TenantRegistryService {
     public Optional<TenantConfig> getTenantById(int tenantId) {
         ensureMasterUiColumns();
         String sql = "SELECT TENANT_ID, TENANT_NAME, DB_SERVER_NM, DB_CATALOG_NM, "
-                   + "PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES "
+                   + "PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES, AUTO_REPLY_ENABLED "
                    + "FROM dbo.TENANT_DB_CONFIG WHERE TENANT_ID = ?";
         List<TenantConfig> results = masterJdbcTemplate.query(sql, TENANT_ROW_MAPPER, tenantId);
         return results.stream().findFirst();
@@ -426,19 +442,21 @@ public class TenantRegistryService {
                 ? config.brandSubtitle().trim() : "INSURANCE MANAGEMENT SUITE";
         String enabledModules = (config.enabledModules() != null && !config.enabledModules().isBlank())
                 ? config.enabledModules().trim() : "dashboard,policy,submissions,claims,diagnostics";
+        boolean autoReply = config.autoReplyEnabled() == null || config.autoReplyEnabled();
 
         String upsertSql = """
                 IF EXISTS (SELECT 1 FROM dbo.TENANT_DB_CONFIG WHERE TENANT_ID = ?)
                     UPDATE dbo.TENANT_DB_CONFIG
                     SET TENANT_NAME = ?, DB_SERVER_NM = ?, DB_CATALOG_NM = ?,
-                        PRIMARY_COLOR = ?, ACCENT_COLOR = ?, BRAND_TITLE = ?, BRAND_SUBTITLE = ?, ENABLED_MODULES = ?
+                        PRIMARY_COLOR = ?, ACCENT_COLOR = ?, BRAND_TITLE = ?, BRAND_SUBTITLE = ?, ENABLED_MODULES = ?,
+                        AUTO_REPLY_ENABLED = ?
                     WHERE TENANT_ID = ?
                 ELSE
                     INSERT INTO dbo.TENANT_DB_CONFIG (
                         TENANT_ID, TENANT_NAME, DB_SERVER_NM, DB_CATALOG_NM,
-                        PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES
+                        PRIMARY_COLOR, ACCENT_COLOR, BRAND_TITLE, BRAND_SUBTITLE, ENABLED_MODULES, AUTO_REPLY_ENABLED
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         masterJdbcTemplate.update(
                 upsertSql,
@@ -451,6 +469,7 @@ public class TenantRegistryService {
                 brandTitle,
                 brandSubtitle,
                 enabledModules,
+                autoReply ? 1 : 0,
                 config.tenantId(),
                 config.tenantId(),
                 config.tenantName(),
@@ -460,7 +479,8 @@ public class TenantRegistryService {
                 accentColor,
                 brandTitle,
                 brandSubtitle,
-                enabledModules
+                enabledModules,
+                autoReply ? 1 : 0
         );
         return new TenantConfig(
                 config.tenantId(),
@@ -471,8 +491,24 @@ public class TenantRegistryService {
                 accentColor,
                 brandTitle,
                 brandSubtitle,
-                enabledModules
+                enabledModules,
+                autoReply
         );
+    }
+
+    public boolean updateTenantAutoReply(int tenantId, boolean enabled) {
+        ensureMasterUiColumns();
+        int rows = masterJdbcTemplate.update(
+                "UPDATE dbo.TENANT_DB_CONFIG SET AUTO_REPLY_ENABLED = ? WHERE TENANT_ID = ?",
+                enabled ? 1 : 0, tenantId
+        );
+        return rows > 0;
+    }
+
+    public boolean isTenantAutoReplyEnabled(int tenantId) {
+        return getTenantById(tenantId)
+                .map(TenantConfig::isAutoReplyEnabled)
+                .orElse(true);
     }
 
     public int getNextTenantId() {
@@ -505,8 +541,25 @@ public class TenantRegistryService {
             String enabledModules,
             Boolean createDatabase,
             Boolean copySchema,
-            Boolean seedInitialData
+            Boolean seedInitialData,
+            Boolean autoReplyEnabled
     ) {
+        public ProvisionTenantRequest(
+                Integer tenantId,
+                String tenantName,
+                String dbServerName,
+                String dbCatalogName,
+                String primaryColor,
+                String accentColor,
+                String brandTitle,
+                String brandSubtitle,
+                String enabledModules,
+                Boolean createDatabase,
+                Boolean copySchema,
+                Boolean seedInitialData
+        ) {
+            this(tenantId, tenantName, dbServerName, dbCatalogName, primaryColor, accentColor, brandTitle, brandSubtitle, enabledModules, createDatabase, copySchema, seedInitialData, true);
+        }
     }
 
     public Map<String, Object> provisionNewTenant(ProvisionTenantRequest req) {
@@ -835,7 +888,8 @@ public class TenantRegistryService {
                 req.accentColor(),
                 req.brandTitle(),
                 req.brandSubtitle(),
-                req.enabledModules()
+                req.enabledModules(),
+                req.autoReplyEnabled() != null ? req.autoReplyEnabled() : true
         ));
 
         // 5. Seed default roles for tenant in dbo.TENANT_ROLE_CONFIG

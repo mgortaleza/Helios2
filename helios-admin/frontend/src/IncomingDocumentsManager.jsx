@@ -26,7 +26,8 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Switch
 } from '@mui/material';
 import {
   Inbox,
@@ -77,6 +78,56 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
   const [attachCustomTitle, setAttachCustomTitle] = useState('');
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [submittingAttach, setSubmittingAttach] = useState(false);
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true);
+  const [togglingAutoReply, setTogglingAutoReply] = useState(false);
+
+  const loadAutoReplySetting = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/document-api/documents/incoming/settings?tenantId=${tenantId}`);
+      if (data && data.autoReplyEnabled !== undefined) {
+        setAutoReplyEnabled(Boolean(data.autoReplyEnabled));
+      }
+    } catch (e) {
+      try {
+        const tenantData = await apiFetch(`/api/tenants/${tenantId}/auto-reply`);
+        if (tenantData && tenantData.autoReplyEnabled !== undefined) {
+          setAutoReplyEnabled(Boolean(tenantData.autoReplyEnabled));
+        }
+      } catch (ignored) {}
+    }
+  }, [apiFetch, tenantId]);
+
+  useEffect(() => {
+    loadAutoReplySetting();
+  }, [loadAutoReplySetting]);
+
+  const handleToggleAutoReply = async () => {
+    const nextVal = !autoReplyEnabled;
+    setTogglingAutoReply(true);
+    try {
+      await apiFetch(`/document-api/documents/incoming/settings/auto-reply?tenantId=${tenantId}&enabled=${nextVal}`, {
+        method: 'POST'
+      });
+      setAutoReplyEnabled(nextVal);
+      setFlash({
+        type: 'success',
+        text: `Incoming Documents Auto-Reply ${nextVal ? 'ENABLED' : 'DISABLED'} for Tenant #${tenantId}.`
+      });
+    } catch (err) {
+      try {
+        await apiFetch(`/api/tenants/${tenantId}/auto-reply?enabled=${nextVal}`, { method: 'PUT' });
+        setAutoReplyEnabled(nextVal);
+        setFlash({
+          type: 'success',
+          text: `Incoming Documents Auto-Reply ${nextVal ? 'ENABLED' : 'DISABLED'} for Tenant #${tenantId}.`
+        });
+      } catch (e2) {
+        setFlash({ type: 'error', text: `Failed to update auto-reply setting: ${err.message}` });
+      }
+    } finally {
+      setTogglingAutoReply(false);
+    }
+  };
 
   const loadIncomingDocs = useCallback(async () => {
     setLoading(true);
@@ -442,7 +493,27 @@ export default function IncomingDocumentsManager({ apiFetch, activeTenantId, sel
               </Typography>
             </Box>
 
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 1.25, py: 0.4, bgcolor: '#f8fafc', borderRadius: 1.5, border: '1px solid #e2e8f0' }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', fontSize: '0.72rem' }}>
+                  AUTO-REPLY:
+                </Typography>
+                <Switch
+                  size="small"
+                  checked={autoReplyEnabled}
+                  onChange={handleToggleAutoReply}
+                  disabled={togglingAutoReply}
+                  color="success"
+                />
+                <Chip
+                  size="small"
+                  label={autoReplyEnabled ? 'Active' : 'Disabled'}
+                  color={autoReplyEnabled ? 'success' : 'default'}
+                  variant={autoReplyEnabled ? 'filled' : 'outlined'}
+                  sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
+                />
+              </Box>
+
               <Button
                 variant="outlined"
                 size="small"

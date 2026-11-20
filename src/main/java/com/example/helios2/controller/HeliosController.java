@@ -104,6 +104,34 @@ public class HeliosController {
         return ResponseEntity.ok(result);
     }
 
+    @GetMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> getTenantAutoReply(@PathVariable("tenantId") int tenantId) {
+        boolean enabled = tenantRegistryService.isTenantAutoReplyEnabled(tenantId);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", enabled
+        ));
+    }
+
+    @PutMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> setTenantAutoReply(
+            @PathVariable("tenantId") int tenantId,
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        boolean updated = tenantRegistryService.updateTenantAutoReply(tenantId, enabled);
+        return ResponseEntity.ok(Map.of(
+                "tenantId", tenantId,
+                "autoReplyEnabled", enabled,
+                "success", updated
+        ));
+    }
+
+    @PostMapping("/tenants/{tenantId}/auto-reply")
+    public ResponseEntity<Map<String, Object>> postTenantAutoReply(
+            @PathVariable("tenantId") int tenantId,
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        return setTenantAutoReply(tenantId, enabled);
+    }
+
     @GetMapping("/roles")
     public List<TenantRegistryService.TenantRoleDto> getRoles(
             @RequestParam(name = "tenantId", required = false) Integer tenantIdParam) {
